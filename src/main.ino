@@ -54,8 +54,11 @@
         D6  = MISO 
         D8  = SCK  
 
-  Date:         25.02.2022
-  Modified:     Release Version 1.0
+  Date:         01.05.2022
+  Modified:     Version 1.1
+
+  Changes:      Watchdog mit 8s Laufzeit ergänzt
+                Credentials.h mit den Daten des MQTT Servers (mqttuser und mqttpass) ergänzt
 
 
   Author:       Jürgen Thaler
@@ -66,7 +69,7 @@
 
   -------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
 
-const String versions = "1.0";    // vor jeder änderung hier hochzählen
+const String versions = "1.1";    // vor jeder Änderung hier hochzählen
 
 // Include some libraries
 #include <Arduino.h>
@@ -78,10 +81,12 @@ const String versions = "1.0";    // vor jeder änderung hier hochzählen
 #include <U8g2lib.h>
 U8G2_SH1106_128X64_NONAME_1_HW_I2C u8g2(U8G2_R0, /* reset=*/ U8X8_PIN_NONE);
 #include <Wire.h>
+#include <credentials.h>          // WIFI Credentials
+#include <avr/wdt.h>              // Watchdog Library
 
 #define USE_SERIAL  Serial
 
-#define MODE_PIN 19         //Taster zum umschalten des MODE
+#define MODE_PIN 19               //Taster zum umschalten des MODE
 #define MODE_POOL 0
 #define MODE_PUFFERSPEICHER 1
 #define MODE_AUTO 2
@@ -139,8 +144,8 @@ IPAddress mqttserver(192, 168, 178, 55);
 const int mqttport = 1883;
 // Wenn der MQTT Server eine Authentifizierung verlangt, bitte folgende Zeile aktivieren und Benutzer / Passwort eintragen
 //#define mqttauth
-const char mqttuser = "USER";
-const char mqttpass = "PASSWORD";
+//const char mqttuser = "USER";
+//const char mqttpass = "PASSWORD";
 
 // IP Adresse, falls kein DHCP vorhanden ist. Diese Adresse wird nur verwendet, wenn der DHCP-Server nicht erreichbar ist.
 IPAddress ip(192, 168, 178, 11);
@@ -536,6 +541,9 @@ void setup() {
   //USE_SERIAL.print(F("IP: "));
   //USE_SERIAL.println(Ethernet.localIP());
 
+   //watchdog timer with 8 Seconds time out
+   wdt_enable(WDTO_8S);
+
 }
 
 void MqttConnect(char *user, char* pass) {
@@ -882,6 +890,7 @@ void loop() {
   }
 
   ////USE_SERIAL.println(F("Debug: End of LOOP"));
+  wdt_reset();
 }
 
 /******************************************************************************************
@@ -1093,6 +1102,7 @@ void write_lcd(void) {
     u8g2.setCursor(3, 90);
     u8g2.print(modes[mode]);
     u8g2.setCursor(25, 120);
+    wdt_reset();
     u8g2.print(mode_count);
   } while ( u8g2.nextPage() );
   }
