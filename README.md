@@ -1,5 +1,5 @@
 # SolarControl
-Arduino Mega2560 Pro, MAX31865 - PT1000, 4 Relay, MQTT, Temperaturdiffernz-Steuerung, Pool-Modus, Pegelsonde
+Arduino Mega2560 Pro, MAX31865 - PT1000, 4 Relay, MQTT, Temperaturdifferenz-Steuerung, Pool-Modus, Pegelsonde
 
 Dieses Projekt dient zur Steuerung meiner Warmwasser-Solaranlage.
 Das System ist so ausgelegt, dass die Temperaturdifferenz-Steuerung autonom funktioniert.
@@ -13,6 +13,7 @@ Die Steuerung hat einen Automatik und zwei manuelle Modi.
 -> Auto:  Grundsätzlich läuft die Anlage im Pufferspeicher-Modus. Wenn die Poolsteuerung über MQTT mitteilt, dass die Poolsteuerung im Automatikmodus läuft und die Solaranforderung mit dem Topic Solar_Mode "Pool" übermittelt, dann schaltet der Heizmodus auf Pool um. Sprich die Referenztemperatur wird vom Pool verwendet.
 
 Mit den manuellen Modi kann zwischen Pool und Pufferspeicher umgeschaltet werden.
+Umgeschaltet wird mit dem Taster am Gerät oder über MQTT.
 
 # Anschlüße:
 
