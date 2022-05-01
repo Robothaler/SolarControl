@@ -3,10 +3,19 @@
                 Außerdem enthalten ist eine Füllstandsmessung mit Pegelsonde für einen Heizöltank,
                 sowie ein Bewegungsmelder zur Steuerung von Licht und Displayanzeige
 
-  Description:  Dieses Programm misst die analolge Spannung an einem Port, welche von einem Drucksensor
+  Beschreibung: Dieses Programm misst die analoge Spannung an einem Port, welche von einem Drucksensor
                 0-5m Meßhöhe und 4-20mA Stromschnittstelle erzeugt wird.
                 Voraussetzung ist ein Meßwandler, welcher die 24V Versorgungsspannung an
                 den Drucksensor liefert und 0-3,3V analoge Spannung ausgibt.
+                Außerdem wird ein 3-Wegeventil für die Erwärmung eines Pools angesteuert und das
+                Stellungssignal ausgewertet.
+                Via MQTT wird eine Warmwasser-Zirkulationspumpe angesteuert, diese Logik muss aber Extern
+                angesteuert werden.
+                SolarControl ist so programmiert, dass die Temperaturdifferenz zwischen Solarkollektoren und
+                Pufferspeicher gemessen wird. Bei definierter Differenz (Kollektortemperatur >=8°) wird die
+                Solarpumpe angeschaltet, bei unterschreiten (Kollektortemperatur <=2°) wird die Solarpumpe wieder
+                ausgeschaltet. Bei Externer Anforderung über MQTT einer Poolsteuerung wird der Modus auf "Pool" geändert.
+                Damit wird die Pooltemperatur für die Messung anstatt der Kollektortemperatur herangezogen.
                 Dienste:
                 DHCP, wenn vorhanden, sonst wird eine feste IP mit 192.168.178.11 vergeben.
 
