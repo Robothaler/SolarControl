@@ -58,8 +58,10 @@ constexpr uint8_t DS18B20_IDX_BACKFLOW = 1;  // Rücklauf Solar
 #endif
 
 // ────────────────────────────────────────────────────────────
-// RELAIS-AUSGÄNGE (HIGH = aktiv)
+// RELAIS-AUSGÄNGE (Active-LOW: LOW = Relais EIN, HIGH = Relais AUS)
 // ────────────────────────────────────────────────────────────
+#define RELAY_ON   LOW    // Active-LOW: LOW aktiviert das Relais
+#define RELAY_OFF  HIGH   // Active-LOW: HIGH deaktiviert das Relais
 #ifndef PIN_RELAY_PUMP
   #define PIN_RELAY_PUMP          15   // Solarpumpe
 #endif

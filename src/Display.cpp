@@ -76,7 +76,6 @@ static void qr_store_cb(esp_qrcode_handle_t qrcode)
 void init()
 {
     Wire.begin(PIN_I2C_SDA, PIN_I2C_SCL);
-    Wire.setClock(400000);
 
     if (!u8g2.begin()) {
         ESP_LOGE(TAG, "SSD1306 nicht gefunden! SDA=GPIO%d SCL=GPIO%d",
@@ -84,6 +83,8 @@ void init()
         initialized = false;
         return;
     }
+    // setClock NACH begin() – sonst überschreibt u8g2.begin() die Einstellung
+    Wire.setClock(400000);
     u8g2.setFont(u8g2_font_6x10_tf);
     u8g2.setContrast(180);
     initialized = true;

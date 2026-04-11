@@ -11,15 +11,5 @@ dependencies:
     version: "*"
 
 
-  espressif/esp_insights:
-    version: "*"
-    rules:
-      - if: "idf_version >=5.0"
-
-  espressif/esp_diagnostics:
-    version: "*"
-    rules:
-      - if: "idf_version >=5.0"
-
   idf:
     version: ">=5.0"

@@ -61,10 +61,10 @@ State state;
 void init()
 {
     // ── Relay-Pins ──────────────────────────────────────────────────────────
-    pinMode(PIN_RELAY_PUMP,  OUTPUT); digitalWrite(PIN_RELAY_PUMP,  LOW);
-    pinMode(PIN_RELAY_VALVE, OUTPUT); digitalWrite(PIN_RELAY_VALVE, LOW);
-    pinMode(PIN_RELAY_CIRC,  OUTPUT); digitalWrite(PIN_RELAY_CIRC,  LOW);
-    pinMode(PIN_RELAY_ILLUM, OUTPUT); digitalWrite(PIN_RELAY_ILLUM, LOW);
+    pinMode(PIN_RELAY_PUMP,  OUTPUT); digitalWrite(PIN_RELAY_PUMP,  RELAY_OFF);
+    pinMode(PIN_RELAY_VALVE, OUTPUT); digitalWrite(PIN_RELAY_VALVE, RELAY_OFF);
+    pinMode(PIN_RELAY_CIRC,  OUTPUT); digitalWrite(PIN_RELAY_CIRC,  RELAY_OFF);
+    pinMode(PIN_RELAY_ILLUM, OUTPUT); digitalWrite(PIN_RELAY_ILLUM, RELAY_OFF);
 
     // ── Eingabe-Pins ────────────────────────────────────────────────────────
     pinMode(PIN_VALVE_STATUS, INPUT_PULLUP);
@@ -334,7 +334,7 @@ void setPump(bool on)
 {
     if (state.pumpRunning == on) return; // Kein unnötiges Schalten
     state.pumpRunning = on;
-    digitalWrite(PIN_RELAY_PUMP, on ? HIGH : LOW);
+    digitalWrite(PIN_RELAY_PUMP, on ? RELAY_ON : RELAY_OFF);
     MatterDevices::updatePumpState(on);
     ESP_LOGI(TAG, "Pumpe: %s", on ? "EIN" : "AUS");
 }
@@ -342,7 +342,7 @@ void setPump(bool on)
 void setValve(bool poolMode)
 {
     state.valvePool = poolMode;
-    digitalWrite(PIN_RELAY_VALVE, poolMode ? HIGH : LOW);
+    digitalWrite(PIN_RELAY_VALVE, poolMode ? RELAY_ON : RELAY_OFF);
     MatterDevices::updateValveState(poolMode);
     ESP_LOGI(TAG, "Ventil: %s", poolMode ? "POOL" : "BOILER");
 }
@@ -351,7 +351,7 @@ void setCirculation(bool on)
 {
     if (state.circulationOn == on) return;
     state.circulationOn = on;
-    digitalWrite(PIN_RELAY_CIRC, on ? HIGH : LOW);
+    digitalWrite(PIN_RELAY_CIRC, on ? RELAY_ON : RELAY_OFF);
     MatterDevices::updateCirculationState(on);
     ESP_LOGI(TAG, "Zirkulation: %s", on ? "EIN" : "AUS");
 }
@@ -360,7 +360,7 @@ void setIllumination(bool on)
 {
     if (state.illuminationOn == on) return;
     state.illuminationOn = on;
-    digitalWrite(PIN_RELAY_ILLUM, on ? HIGH : LOW);
+    digitalWrite(PIN_RELAY_ILLUM, on ? RELAY_ON : RELAY_OFF);
     MatterDevices::updateIlluminationState(on);
     ESP_LOGI(TAG, "Beleuchtung: %s", on ? "EIN" : "AUS");
 }
