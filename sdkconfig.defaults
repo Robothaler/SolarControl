@@ -1,0 +1,95 @@
+# sdkconfig.defaults for ESP32-PoolMaster (ESP32-S3, Matter over Wi-Fi)
+# Used only by matter_serial / matter_ota environments (framework = espidf, arduino).
+# Regular arduino-only environments (serial_upload, OTA_upload) ignore this file.
+
+# ── Target ─────────────────────────────────────────────────────────────────────
+CONFIG_IDF_TARGET="esp32s3"
+
+# ── Flash ──────────────────────────────────────────────────────────────────────
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="16MB"
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# ── PSRAM (8MB OPI/Octal) ──────────────────────────────────────────────────────
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_SPEED_80M=y
+CONFIG_SPIRAM_FETCH_INSTRUCTIONS=y
+CONFIG_SPIRAM_RODATA=y
+
+# ── ESP32-S3 Instruction Cache / IRAM balance ──────────────────────────────────
+# S3 Bank 0 = 48KB split between I-Cache and IRAM:
+#   32KB cache → 16KB IRAM  (default, leads to 100% IRAM usage with Matter)
+#   16KB cache →  32KB IRAM  ← use this; SPIRAM_FETCH_INSTRUCTIONS compensates the smaller cache
+CONFIG_ESP32S3_INSTRUCTION_CACHE_16KB=y
+
+# ── Arduino compatibility ───────────────────────────────────────────────────────
+CONFIG_AUTOSTART_ARDUINO=y
+CONFIG_ARDUINO_SELECTIVE_COMPILATION=y
+# Disable heavy Arduino subsystems not needed
+CONFIG_ARDUINO_SELECTIVE_ArduinoBLE=n
+CONFIG_ARDUINO_SELECTIVE_SimpleBLE=n
+CONFIG_ARDUINO_SELECTIVE_WiFiProv=n
+CONFIG_ARDUINO_SELECTIVE_RainMaker=n
+CONFIG_ARDUINO_SELECTIVE_Insights=n
+CONFIG_ARDUINO_SELECTIVE_Zigbee=n
+CONFIG_ARDUINO_SELECTIVE_ESP_SR=n
+CONFIG_ARDUINO_SELECTIVE_ESP_I2S=n
+CONFIG_ARDUINO_SELECTIVE_Matter=n
+
+# ── FreeRTOS ───────────────────────────────────────────────────────────────────
+CONFIG_FREERTOS_HZ=1000
+CONFIG_FREERTOS_UNICORE=n
+
+# ── Bluetooth (NimBLE for Matter commissioning) ────────────────────────────────
+CONFIG_BT_ENABLED=y
+CONFIG_BT_NIMBLE_ENABLED=y
+CONFIG_BT_CONTROLLER_DISABLED=n
+# BLE advertising used by Matter for commissioning; disable after commissioned if desired
+CONFIG_ENABLE_CHIPOBLE=y
+
+# ── OpenThread — disabled (Wi-Fi only, no Thread border router) ────────────────
+CONFIG_OPENTHREAD_ENABLED=n
+CONFIG_OPENTHREAD_RADIO_NATIVE=n
+
+# ── Wi-Fi ──────────────────────────────────────────────────────────────────────
+CONFIG_ESP32_WIFI_ENABLED=y
+CONFIG_ESP32_WIFI_TASK_PINNED_TO_CORE_1=y
+CONFIG_ESP32_WIFI_SOFTAP_SUPPORT=n
+CONFIG_ESP32_WIFI_NAN_ENABLE=n
+
+# ── Matter / CHIP stack ────────────────────────────────────────────────────────
+CONFIG_ESP_MATTER_NVS_USE_COMPACT_ATTR_STORAGE=y
+
+# Matter Bridge: scale attribute/endpoint counts for 5 bridged devices
+# (FiltrationPump, PhPump, ChlPump, SolarPump, HeatPump)
+CONFIG_ESP_MATTER_MAX_DYNAMIC_ENDPOINT_COUNT=12
+
+# ── NVS ───────────────────────────────────────────────────────────────────────
+# NVS partition (64 KB) shared between PoolMaster config (~16 KB) and Matter (~32 KB)
+CONFIG_NVS_ENCRYPTION=n
+
+# ── Stack / heap tuning ────────────────────────────────────────────────────────
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+CONFIG_CHIP_TASK_STACK_SIZE=8192
+
+# ── Logging ───────────────────────────────────────────────────────────────────
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y
+CONFIG_LOG_DEFAULT_LEVEL=3
+
+# ── mbedTLS / heap ────────────────────────────────────────────────────────────
+CONFIG_MBEDTLS_DYNAMIC_BUFFER=y
+CONFIG_MBEDTLS_DYNAMIC_FREE_PEER_CERT=y
+CONFIG_MBEDTLS_DYNAMIC_FREE_CONFIG_DATA=y
+# HKDF required by Matter's CHIP crypto (CHIPCryptoPALmbedTLS.cpp calls mbedtls_hkdf)
+CONFIG_MBEDTLS_HKDF_C=y
+
+# ── HTTP-Server (WebUI + OTA) ─────────────────────────────────────────────────
+CONFIG_HTTPD_WS_SUPPORT=y
+CONFIG_HTTPD_MAX_REQ_HDR_LEN=1024
+CONFIG_HTTPD_MAX_URI_LEN=512
+
+# ── Compiler ──────────────────────────────────────────────────────────────────
+CONFIG_COMPILER_OPTIMIZATION_SIZE=y
+CONFIG_COMPILER_CXX_EXCEPTIONS=n

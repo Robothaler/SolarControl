@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SolarControl</title>
+<style>
+:root{--bg:#0f0f11;--card:#1c1c1f;--border:#2e2e32;--text:#e4e4e7;--dim:#71717a;--accent:#f59e0b;--green:#22c55e;--red:#ef4444;--blue:#60a5fa}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,sans-serif;min-height:100vh}
+header{background:var(--card);border-bottom:1px solid var(--border);padding:12px 20px;display:flex;align-items:center;gap:10px;position:sticky;top:0;z-index:10}
+h1{font-size:1.1rem;color:var(--accent);font-weight:700;letter-spacing:.03em}
+#ip{font-size:.8rem;color:var(--dim);margin-left:auto;margin-right:8px}
+#dot{width:9px;height:9px;border-radius:50%;background:var(--red);flex-shrink:0}
+#dot.on{background:var(--green)}
+main{max-width:960px;margin:0 auto;padding:16px;display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media(max-width:580px){main{grid-template-columns:1fr;padding:10px;gap:10px}}
+.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px}
+.wide{grid-column:1/-1}
+h2{font-size:.68rem;text-transform:uppercase;letter-spacing:.1em;color:var(--dim);margin-bottom:12px}
+/* Temperature grid */
+.tgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.titem{background:#111114;border-radius:8px;padding:10px 12px}
+.tlbl{font-size:.7rem;color:var(--dim)}
+.tval{font-size:1.45rem;font-weight:600;color:var(--accent);margin-top:3px;white-space:nowrap}
+/* Relay rows */
+.rows{display:flex;flex-direction:column;gap:8px}
+.row{display:flex;align-items:center;justify-content:space-between;padding:9px 12px;background:#111114;border-radius:8px;font-size:.9rem}
+/* Toggle switch */
+.tog{position:relative;width:44px;height:24px;flex-shrink:0}
+.tog input{opacity:0;width:0;height:0;position:absolute}
+.sl{position:absolute;inset:0;background:#3f3f46;border-radius:24px;cursor:pointer;transition:.2s}
+.sl:before{content:'';position:absolute;width:18px;height:18px;left:3px;top:3px;background:#fff;border-radius:50%;transition:.2s}
+input:checked+.sl{background:var(--green)}
+input:checked+.sl:before{transform:translateX(20px)}
+/* Mode buttons */
+.mbts{display:flex;gap:8px}
+.mbt{flex:1;padding:10px 4px;border:1px solid var(--border);background:#111114;color:var(--text);border-radius:8px;cursor:pointer;font-size:.85rem;transition:.15s}
+.mbt:hover{border-color:var(--accent)}
+.mbt.act{background:var(--accent);color:#000;border-color:var(--accent);font-weight:700}
+/* Badge */
+.bdg{display:inline-block;padding:2px 10px;border-radius:4px;font-size:.75rem;font-weight:500}
+.ok{background:rgba(34,197,94,.12);color:var(--green)}
+.err{background:rgba(239,68,68,.12);color:var(--red)}
+/* Info rows */
+.irow{display:flex;justify-content:space-between;align-items:center;padding:7px 0;font-size:.85rem;border-bottom:1px solid var(--border)}
+.irow:last-child{border:none}
+.ival{color:var(--accent);font-weight:500}
+/* Level bar */
+.lvlbg{background:#111114;border-radius:6px;height:7px;margin-top:8px;overflow:hidden}
+.lvlfill{height:100%;background:var(--blue);border-radius:6px;transition:width .5s}
+/* OTA section */
+.otazone{border:2px dashed var(--border);border-radius:8px;padding:18px;text-align:center;cursor:pointer;transition:.2s;margin-bottom:10px}
+.otazone:hover{border-color:var(--accent)}
+#fwlbl{cursor:pointer;color:var(--dim);font-size:.9rem}
+.otabtn{width:100%;padding:11px;background:var(--accent);color:#000;border:0;border-radius:8px;font-weight:700;cursor:pointer;font-size:.95rem;transition:.15s}
+.otabtn:disabled{opacity:.35;cursor:not-allowed}
+#otamsg{font-size:.85rem;color:var(--dim);margin-top:10px;text-align:center;min-height:18px}
+.pbg{background:#111114;border-radius:6px;height:6px;overflow:hidden;display:none;margin-top:8px}
+.pf{height:100%;background:var(--accent);border-radius:6px;width:0%;transition:width .3s}
+/* Section spacing */
+.sep{margin-top:16px}
+</style>
+</head>
+<body>
+<header>
+  <h1>&#9728; SolarControl</h1>
+  <span id="ip">-</span>
+  <span id="dot"></span>
+</header>
+<main>
+
+  <!-- Solar-Temperaturen -->
+  <div class="card">
+    <h2>Solar-Temperaturen</h2>
+    <div class="tgrid">
+      <div class="titem"><div class="tlbl">Kollektor / Dach</div><div class="tval" id="t0">--&deg;C</div></div>
+      <div class="titem"><div class="tlbl">Boiler</div><div class="tval" id="t1">--&deg;C</div></div>
+      <div class="titem"><div class="tlbl">Pufferspeicher</div><div class="tval" id="t2">--&deg;C</div></div>
+      <div class="titem"><div class="tlbl">R&uuml;cklauf Solar</div><div class="tval" id="t3">--&deg;C</div></div>
+    </div>
+  </div>
+
+  <!-- Pool + Modus -->
+  <div class="card">
+    <h2>Pool-Temperaturen</h2>
+    <div class="tgrid">
+      <div class="titem"><div class="tlbl">Pool Ist</div><div class="tval" id="t4">--&deg;C</div></div>
+      <div class="titem"><div class="tlbl">Pool Soll</div><div class="tval" id="t5">--&deg;C</div></div>
+    </div>
+    <div class="sep">
+      <h2>Betriebsmodus</h2>
+      <div class="mbts">
+        <button class="mbt" id="m0" onclick="cmd('set_mode','AUTO')">AUTO</button>
+        <button class="mbt" id="m1" onclick="cmd('set_mode','MANUAL_POOL')">POOL</button>
+        <button class="mbt" id="m2" onclick="cmd('set_mode','MANUAL_BOILER')">BOILER</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Aktoren -->
+  <div class="card">
+    <h2>Aktoren</h2>
+    <div class="rows">
+      <div class="row"><span>Solarpumpe</span><label class="tog"><input type="checkbox" id="a0" onchange="cmd('set_pump',this.checked)"><span class="sl"></span></label></div>
+      <div class="row"><span>Ventil (Pool-Modus)</span><label class="tog"><input type="checkbox" id="a1" onchange="cmd('set_valve',this.checked)"><span class="sl"></span></label></div>
+      <div class="row"><span>Zirkulationspumpe</span><label class="tog"><input type="checkbox" id="a2" onchange="cmd('set_circ',this.checked)"><span class="sl"></span></label></div>
+      <div class="row"><span>Beleuchtung</span><label class="tog"><input type="checkbox" id="a3" onchange="cmd('set_illum',this.checked)"><span class="sl"></span></label></div>
+      <div class="row"><span>Bewegungsm. Power (GPIO21)</span><label class="tog"><input type="checkbox" id="a4" onchange="cmd('set_motion_power',this.checked)"><span class="sl"></span></label></div>
+    </div>
+  </div>
+
+  <!-- Eingaenge + System -->
+  <div class="card">
+    <h2>Eing&auml;nge</h2>
+    <div class="irow"><span>Ventilstatus</span><span id="vs" class="bdg">-</span></div>
+    <div class="irow"><span>Bewegungsmelder</span><span id="mv" class="bdg">-</span></div>
+    <div class="irow"><span>F&uuml;llstand</span><span id="lv" class="ival">-</span></div>
+    <div class="lvlbg"><div class="lvlfill" id="lb"></div></div>
+
+    <div class="sep">
+      <h2>System</h2>
+      <div class="irow"><span>IP-Adresse</span><span id="si" class="ival">-</span></div>
+      <div class="irow"><span>Matter</span><span id="sm" class="bdg">-</span></div>
+      <div class="irow"><span>Uptime</span><span id="su" class="ival">-</span></div>
+      <div class="irow"><span>Freier Heap</span><span id="sh" class="ival">-</span></div>
+      <div class="irow"><span>Version</span><span id="sv" class="ival">-</span></div>
+    </div>
+  </div>
+
+  <!-- OTA Firmware Update -->
+  <div class="card wide">
+    <h2>Firmware Update (OTA)</h2>
+    <div class="otazone" onclick="document.getElementById('fw').click()">
+      <input type="file" id="fw" accept=".bin" style="display:none" onchange="onFile(this)">
+      <label id="fwlbl">&#128194; .bin Datei w&auml;hlen oder hier ablegen</label>
+    </div>
+    <button class="otabtn" id="otabtn" onclick="startOTA()" disabled>Firmware hochladen</button>
+    <div id="otamsg"></div>
+    <div class="pbg" id="pbg"><div class="pf" id="pf"></div></div>
+  </div>
+
+</main>
+<script>
+var ws, rt;
+
+function connect() {
+  ws = new WebSocket('ws://' + location.host + '/ws');
+  ws.onopen  = function() { document.getElementById('dot').className = 'on'; clearTimeout(rt); };
+  ws.onclose = function() { document.getElementById('dot').className = '';   rt = setTimeout(connect, 3000); };
+  ws.onmessage = function(e) { try { apply(JSON.parse(e.data)); } catch(x) {} };
+}
+
+function tf(v) { return (typeof v === 'number') ? v.toFixed(1) + '\u00B0C' : '--\u00B0C'; }
+
+function ut(s) {
+  s = s || 0;
+  var h = Math.floor(s / 3600);
+  var m = Math.floor((s % 3600) / 60);
+  var sec = s % 60;
+  return (h ? h + 'h ' : '') + (m ? m + 'm ' : '') + sec + 's';
+}
+
+function chk(id, v) {
+  var e = document.getElementById(id);
+  if (e) e.checked = !!v;
+}
+
+function apply(d) {
+  document.getElementById('t0').textContent = tf(d.roofTemp);
+  document.getElementById('t1').textContent = tf(d.boilerTemp);
+  document.getElementById('t2').textContent = tf(d.storageTemp);
+  document.getElementById('t3').textContent = tf(d.backflowTemp);
+  document.getElementById('t4').textContent = tf(d.poolTemp);
+  document.getElementById('t5').textContent = tf(d.poolSollTemp);
+
+  ['m0','m1','m2'].forEach(function(id) { document.getElementById(id).classList.remove('act'); });
+  var mi = { 'AUTO':'m0', 'MANUAL_POOL':'m1', 'MANUAL_BOILER':'m2' };
+  if (mi[d.mode]) document.getElementById(mi[d.mode]).classList.add('act');
+
+  chk('a0', d.pumpRunning);
+  chk('a1', d.valvePool);
+  chk('a2', d.circulationOn);
+  chk('a3', d.illuminationOn);
+  chk('a4', d.motionPower);
+
+  var vs = document.getElementById('vs');
+  vs.textContent = d.valveStatusOK ? 'OK' : 'FEHLER';
+  vs.className   = 'bdg ' + (d.valveStatusOK ? 'ok' : 'err');
+
+  var mv = document.getElementById('mv');
+  mv.textContent = d.motionDetected ? 'Erkannt' : 'Keine';
+  mv.className   = 'bdg ' + (d.motionDetected ? 'ok' : '');
+
+  var lp = d.levelPct || 0;
+  document.getElementById('lv').textContent = lp.toFixed(1) + '%' + (d.levelWarn ? ' \u26A0' : '');
+  document.getElementById('lb').style.width = Math.min(100, lp).toFixed(0) + '%';
+
+  document.getElementById('ip').textContent = d.wifiIP || '-';
+  document.getElementById('si').textContent = d.wifiIP || '-';
+
+  var sm = document.getElementById('sm');
+  sm.textContent = d.commissioned ? 'Verbunden' : 'Ausstehend';
+  sm.className   = 'bdg ' + (d.commissioned ? 'ok' : 'err');
+
+  document.getElementById('su').textContent = ut(d.uptime);
+  document.getElementById('sh').textContent = ((d.freeHeap || 0) / 1024).toFixed(0) + ' kB';
+  document.getElementById('sv').textContent = d.version || '-';
+}
+
+function cmd(c, v) {
+  if (ws && ws.readyState === 1) ws.send(JSON.stringify({ cmd: c, value: v }));
+}
+
+function onFile(inp) {
+  var f = inp.files[0];
+  document.getElementById('fwlbl').textContent = f
+    ? '\uD83D\uDCC4 ' + f.name + ' (' + Math.round(f.size / 1024) + ' KB)'
+    : '\uD83D\uDCC2 .bin Datei w\u00E4hlen';
+  document.getElementById('otabtn').disabled = !f;
+}
+
+function startOTA() {
+  var f = document.getElementById('fw').files[0];
+  if (!f) return;
+  if (!confirm('Firmware hochladen: ' + f.name + ' (' + Math.round(f.size/1024) + ' KB)?')) return;
+
+  document.getElementById('otabtn').disabled = true;
+  document.getElementById('otamsg').textContent = '';
+
+  var xhr = new XMLHttpRequest();
+  xhr.open('POST', '/update');
+  xhr.setRequestHeader('X-Firmware-Size', '' + f.size);
+
+  xhr.upload.onprogress = function(e) {
+    if (e.lengthComputable) {
+      var p = Math.round(e.loaded / e.total * 100);
+      prog(p, 'Uploading\u2026 ' + p + '%');
+    }
+  };
+  xhr.onload = function() {
+    if (xhr.status === 200) {
+      prog(100, '\u2713 Erfolgreich! Neustart l\u00E4uft...');
+    } else {
+      prog(0, '\u2717 Fehler: ' + xhr.responseText);
+      document.getElementById('otabtn').disabled = false;
+    }
+  };
+  xhr.onerror = function() {
+    prog(0, '\u2717 Verbindungsfehler');
+    document.getElementById('otabtn').disabled = false;
+  };
+
+  var fd = new FormData();
+  fd.append('firmware', f);
+  xhr.send(fd);
+}
+
+function prog(p, msg) {
+  document.getElementById('otamsg').textContent = msg;
+  var bg = document.getElementById('pbg');
+  bg.style.display = 'block';
+  document.getElementById('pf').style.width = p + '%';
+}
+
+connect();
+</script>
+</body>
+</html>

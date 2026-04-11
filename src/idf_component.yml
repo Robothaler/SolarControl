@@ -1,0 +1,25 @@
+## IDF Component Manager Manifest File
+## Identisch zu ESP32-PoolMaster/Matter_dev/src/idf_component.yml
+
+dependencies:
+  espressif/esp_matter:
+    version: "*"
+    rules:
+      - if: "idf_version >=5.0"
+
+  espressif/qrcode:
+    version: "*"
+
+
+  espressif/esp_insights:
+    version: "*"
+    rules:
+      - if: "idf_version >=5.0"
+
+  espressif/esp_diagnostics:
+    version: "*"
+    rules:
+      - if: "idf_version >=5.0"
+
+  idf:
+    version: ">=5.0"
