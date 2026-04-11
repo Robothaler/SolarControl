@@ -51,11 +51,15 @@ CONFIG_BT_NIMBLE_ENABLED=y
 CONFIG_BT_CONTROLLER_DISABLED=n
 # BLE advertising used by Matter for commissioning; disable after commissioned if desired
 CONFIG_ENABLE_CHIPOBLE=y
-# Allocate NimBLE heap from PSRAM instead of internal RAM (fixes TLSF OOM crash)
+# Allocate NimBLE host heap from PSRAM instead of internal RAM
 CONFIG_BT_NIMBLE_MEM_ALLOC_MODE_EXTERNAL=y
-# Reduce NimBLE MSYS pool sizes to further ease internal RAM pressure
-CONFIG_BT_NIMBLE_MSYS_1_BLOCK_COUNT=12
-CONFIG_BT_NIMBLE_MSYS_2_BLOCK_COUNT=12
+# Only 1 simultaneous BLE connection needed (Matter commissioning)
+CONFIG_BT_NIMBLE_MAX_CONNECTIONS=1
+# BLE controller: max activities (advertising + 1 connection = 2 needed for Matter)
+# Default is 6; each activity entry is ~few-hundred bytes of internal DMA RAM.
+CONFIG_BT_CTRL_BLE_MAX_ACT=2
+# Duplicate scan filter – we never scan, so shrink this table from 30 to 10
+CONFIG_BT_CTRL_ADV_DUP_FILT_MAX=10
 
 # ── OpenThread — disabled (Wi-Fi only, no Thread border router) ────────────────
 CONFIG_OPENTHREAD_ENABLED=n
@@ -66,6 +70,13 @@ CONFIG_ESP32_WIFI_ENABLED=y
 CONFIG_ESP32_WIFI_TASK_PINNED_TO_CORE_1=y
 CONFIG_ESP32_WIFI_SOFTAP_SUPPORT=n
 CONFIG_ESP32_WIFI_NAN_ENABLE=n
+# Disable AMPDU RX – removes the WIFI_RX_BA_WIN >= 2*STATIC_RX_BUFFER_NUM constraint
+# and allows reducing static RX buffers without a build error.
+CONFIG_ESP32_WIFI_AMPDU_RX_ENABLED=n
+# Static RX buffers live in internal DMA RAM even with SPIRAM_TRY_ALLOCATE_WIFI_LWIP.
+# Cutting from the PSRAM-boosted default of 16 to 4 saves 12×1600 B = 19.2 KB of
+# internal RAM, which is the headroom the BLE controller malloc_internal_wrapper needs.
+CONFIG_ESP32_WIFI_STATIC_RX_BUFFER_NUM=4
 
 
 # ── Matter / CHIP stack ────────────────────────────────────────────────────────
@@ -81,7 +92,15 @@ CONFIG_NVS_ENCRYPTION=n
 
 # ── Stack / heap tuning ────────────────────────────────────────────────────────
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
-CONFIG_CHIP_TASK_STACK_SIZE=8192
+# CHIP task runs WiFi init + NimBLE host init + BLE controller init before the
+# Arduino task resumes. 8192 bytes caused TLSF heap corruption (stack overflow
+# silently writing past the stack base into the adjacent free-block header).
+# Doubled to 16384 to give the Matter WiFi+BLE bring-up path sufficient room.
+CONFIG_CHIP_TASK_STACK_SIZE=16384
+
+# FreeRTOS stack-overflow canary: writes 0xa5a5a5a5 at the task stack base and
+# checks it on every context switch. Catches overflows before they corrupt heap.
+CONFIG_FREERTOS_CHECK_STACKOVERFLOW_CANARY=y
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 CONFIG_LOG_DEFAULT_LEVEL_INFO=y

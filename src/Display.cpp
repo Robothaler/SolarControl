@@ -7,6 +7,8 @@
 #include <esp_log.h>
 #include <qrcode.h>   // espressif__qrcode (via idf_component.yml)
 #include <esp_netif.h>
+#include <driver/gpio.h>
+#include <rom/ets_sys.h>
 
 static const char* TAG = "Display";
 
@@ -73,19 +75,59 @@ static void qr_store_cb(esp_qrcode_handle_t qrcode)
 // ─────────────────────────────────────────────────────────────────────────────
 // Initialisierung
 // ─────────────────────────────────────────────────────────────────────────────
+// I2C bus recovery: clock 9 SCL cycles to release a slave stuck mid-byte.
+// RTC_SW_CPU_RST does not reset I2C peripherals or connected devices.
+// After a crash the SSD1306 may hold SDA low, blocking the bus.
+// Standard recovery (NXP UM10204 §3.1.16): clock SCL 9× with SDA high,
+// then issue a manual STOP (SDA low→high while SCL high).
+static void recoverI2cBus()
+{
+    // Configure both lines as open-drain outputs, pull high
+    gpio_config_t cfg = {};
+    cfg.pin_bit_mask = (1ULL << PIN_I2C_SCL) | (1ULL << PIN_I2C_SDA);
+    cfg.mode         = GPIO_MODE_OUTPUT_OD;
+    cfg.pull_up_en   = GPIO_PULLUP_ENABLE;
+    cfg.pull_down_en = GPIO_PULLDOWN_DISABLE;
+    cfg.intr_type    = GPIO_INTR_DISABLE;
+    gpio_config(&cfg);
+
+    gpio_set_level((gpio_num_t)PIN_I2C_SDA, 1);
+    gpio_set_level((gpio_num_t)PIN_I2C_SCL, 1);
+    ets_delay_us(10);
+
+    for (int i = 0; i < 9; i++) {
+        gpio_set_level((gpio_num_t)PIN_I2C_SCL, 0);
+        ets_delay_us(5);
+        gpio_set_level((gpio_num_t)PIN_I2C_SCL, 1);
+        ets_delay_us(5);
+    }
+
+    // Manual STOP condition: SDA low → high while SCL high
+    gpio_set_level((gpio_num_t)PIN_I2C_SDA, 0);
+    ets_delay_us(5);
+    gpio_set_level((gpio_num_t)PIN_I2C_SCL, 1);
+    ets_delay_us(5);
+    gpio_set_level((gpio_num_t)PIN_I2C_SDA, 1);
+    ets_delay_us(5);
+
+    // Release to input so Wire.begin() can reconfigure as I2C
+    gpio_set_direction((gpio_num_t)PIN_I2C_SCL, GPIO_MODE_INPUT);
+    gpio_set_direction((gpio_num_t)PIN_I2C_SDA, GPIO_MODE_INPUT);
+    ets_delay_us(10);
+}
+
 void init()
 {
-    // Wire.begin() is called internally by u8g2.begin() with the pins
-    // passed to the U8G2 constructor — calling it twice triggers the
-    // double i2cInit that leaves the bus in ESP_ERR_INVALID_STATE.
+    // Release any slave (SSD1306) stuck mid-byte from the previous boot.
+    // Must run before Wire.begin() / u8g2.begin() so the bus is idle.
+    recoverI2cBus();
+
     if (!u8g2.begin()) {
         ESP_LOGE(TAG, "SSD1306 nicht gefunden! SDA=GPIO%d SCL=GPIO%d",
                  PIN_I2C_SDA, PIN_I2C_SCL);
         initialized = false;
         return;
     }
-    // setClock NACH begin() – sonst überschreibt u8g2.begin() die Einstellung
-    Wire.setClock(400000);
     u8g2.setFont(u8g2_font_6x10_tf);
     u8g2.setContrast(180);
     initialized = true;

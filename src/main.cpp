@@ -322,6 +322,13 @@ void setup()
         esp_restart();
     }
 
+    // Heap-Diagnose VOR Matter-Start: BLE-Controller braucht MALLOC_CAP_INTERNAL|DMA.
+    // Der CHIP-Task (höhere FreeRTOS-Priorität) preempt sofort nach esp_matter::start()
+    // → Logs nach start() sind unerreichbar bis nach dem BLE-Init-Crash.
+    ESP_LOGI(TAG, "RAM vor Matter-Start: %u B frei, groesster Block: %u B",
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+
     // Matter Stack starten
     // KORRIGIERT: esp_matter::start() nimmt nur den Event Callback
     ret = esp_matter::start(matterEventCallback);
