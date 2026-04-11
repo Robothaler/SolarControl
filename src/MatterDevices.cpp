@@ -125,7 +125,9 @@ esp_err_t init(esp_matter::node_t* node)
 
     {
         esp_matter::endpoint::occupancy_sensor::config_t cfg;
-        cfg.occupancy_sensing.occupancy = 0;
+        cfg.occupancy_sensing.occupancy                  = 0;
+        cfg.occupancy_sensing.occupancy_sensor_type      = 0; // PIR
+        cfg.occupancy_sensing.occupancy_sensor_type_bitmap = 1; // PIR bit – mandatory per Matter spec
         epMotion = esp_matter::endpoint::occupancy_sensor::create(
             node, &cfg,
             esp_matter::ENDPOINT_FLAG_NONE,  // ← korrigiert

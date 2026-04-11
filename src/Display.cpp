@@ -75,8 +75,9 @@ static void qr_store_cb(esp_qrcode_handle_t qrcode)
 // ─────────────────────────────────────────────────────────────────────────────
 void init()
 {
-    Wire.begin(PIN_I2C_SDA, PIN_I2C_SCL);
-
+    // Wire.begin() is called internally by u8g2.begin() with the pins
+    // passed to the U8G2 constructor — calling it twice triggers the
+    // double i2cInit that leaves the bus in ESP_ERR_INVALID_STATE.
     if (!u8g2.begin()) {
         ESP_LOGE(TAG, "SSD1306 nicht gefunden! SDA=GPIO%d SCL=GPIO%d",
                  PIN_I2C_SDA, PIN_I2C_SCL);
