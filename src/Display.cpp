@@ -116,24 +116,29 @@ static void recoverI2cBus()
     ets_delay_us(10);
 }
 
+// Set DISPLAY_ENABLED 0 when no SSD1306 is wired (avoids ~80 I2C error lines
+// on every boot from u8g2's init sequence writing to a non-existent device).
+#define DISPLAY_ENABLED 0
+
 void init()
 {
+#if !DISPLAY_ENABLED
+    ESP_LOGW(TAG, "Display deaktiviert (DISPLAY_ENABLED=0)");
+    initialized = false;
+    return;
+#else
     // Release any slave (SSD1306) stuck mid-byte from the previous boot.
     // Must run before Wire.begin() / u8g2.begin() so the bus is idle.
     recoverI2cBus();
 
-    if (!u8g2.begin()) {
-        ESP_LOGE(TAG, "SSD1306 nicht gefunden! SDA=GPIO%d SCL=GPIO%d",
-                 PIN_I2C_SDA, PIN_I2C_SCL);
-        initialized = false;
-        return;
-    }
+    u8g2.begin();   // F-variant always returns true; ignore return value
     u8g2.setFont(u8g2_font_6x10_tf);
     u8g2.setContrast(180);
     initialized = true;
     ESP_LOGI(TAG, "SSD1306 128x64 OK (SDA=GPIO%d SCL=GPIO%d)",
              PIN_I2C_SDA, PIN_I2C_SCL);
     showBootScreen();
+#endif
 }
 
 void showResetWarning()

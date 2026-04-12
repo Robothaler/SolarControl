@@ -153,6 +153,33 @@ constexpr uint32_t VALVE_SWITCH_DELAY_MS      =  2000; // Pause nach Ventilschal
 constexpr uint32_t DS18B20_CONVERSION_MS      =   750; // DS18B20 Konvertierungszeit[ms]
 
 // ────────────────────────────────────────────────────────────
+// ZIRKULATIONSPUMPE – Steuerparameter
+// ────────────────────────────────────────────────────────────
+// Laufzeit pro Zyklus: 3 Minuten, danach Auto-Off
+constexpr uint32_t CIRC_RUN_DURATION_MS       =  3 * 60 * 1000;  // 3 min
+// Sperrzeit nach jedem Lauf: 45 Minuten (kein erneuter Start möglich)
+constexpr uint32_t CIRC_LOCKOUT_MS            = 45 * 60 * 1000;  // 45 min
+// Legionellenschutz-Intervall: 8 Stunden nach Laufende
+constexpr uint32_t CIRC_LEGIONELLA_INTERVAL_S =  8 * 3600;       // 8 h in Sekunden
+// Tagesstart-Stunde: 06:xx → erster automatischer Tageslauf
+constexpr int      CIRC_DAY_START_HOUR        =  6;               // 06:00
+// Präsenzfenster: Pumpe läuft nur zwischen WINDOW_START und WINDOW_END Uhr
+constexpr int      CIRC_WINDOW_START_H        =  6;               // 06:00
+constexpr int      CIRC_WINDOW_END_H          = 23;               // 23:00
+
+// ────────────────────────────────────────────────────────────
+// ZEITZONE (POSIX TZ-String)
+// Wird nach SNTP-Start gesetzt damit localtime_r() korrekte
+// Ortszeit liefert. Standardwert: Mitteleuropäische Zeit (CET/CEST).
+// ────────────────────────────────────────────────────────────
+#ifndef TIMEZONE_POSIX
+  #define TIMEZONE_POSIX "CET-1CEST,M3.5.0,M10.5.0/3"
+#endif
+
+// NVS-Key für letzten Zirkulations-Lauf (uint32, Unix-Timestamp)
+constexpr char NVS_KEY_CIRC_LAST_RUN[] = "circ_last_run";
+
+// ────────────────────────────────────────────────────────────
 // APP VERSION
 // ────────────────────────────────────────────────────────────────────────────
 constexpr char APP_VERSION[] = "1.2.0";

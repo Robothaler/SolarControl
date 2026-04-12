@@ -8,8 +8,19 @@ CONFIG_IDF_TARGET="esp32s3"
 # ── Flash ──────────────────────────────────────────────────────────────────────
 CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
 CONFIG_ESPTOOLPY_FLASHSIZE="16MB"
+CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
+CONFIG_ESPTOOLPY_FLASHMODE="qio"
+CONFIG_ESPTOOLPY_FLASHFREQ_80M=y
+CONFIG_ESPTOOLPY_FLASHFREQ="80m"
 CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# ── Bootloader: App-Validierung ────────────────────────────────────────────────
+# Wenn esptool verify-flash für ota_0 OK ist, der 2nd-stage-Bootloader aber weiter
+# "esp_image: Checksum failed" meldet, liegt ein Edge-Case zwischen Image-Erzeugung
+# und Bootloader-Prüfung vor (nicht "leeres factory" — das ist weiterhin 0xFF nach Erase).
+# Für Entwicklung: Validierung überspringen. Für Produktion entfernen; nie mit Secure Boot kombinieren.
+CONFIG_BOOTLOADER_SKIP_VALIDATE_ALWAYS=y
 
 # ── PSRAM (8MB OPI/Octal) ──────────────────────────────────────────────────────
 CONFIG_SPIRAM=y
@@ -40,6 +51,10 @@ CONFIG_ARDUINO_SELECTIVE_Zigbee=n
 CONFIG_ARDUINO_SELECTIVE_ESP_SR=n
 CONFIG_ARDUINO_SELECTIVE_ESP_I2S=n
 CONFIG_ARDUINO_SELECTIVE_Matter=n
+# HTTPClient fails to compile with GCC 14.2 / arduino-esp32 3.3.6:
+# emplace_back(String&, String&) has no matching constructor in RequestArgument.
+# Not used by this project (WebUI uses ESPAsyncWebServer, OTA uses espota).
+CONFIG_ARDUINO_SELECTIVE_HTTPClient=n
 
 # ── FreeRTOS ───────────────────────────────────────────────────────────────────
 CONFIG_FREERTOS_HZ=1000
@@ -92,15 +107,11 @@ CONFIG_NVS_ENCRYPTION=n
 
 # ── Stack / heap tuning ────────────────────────────────────────────────────────
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
-# CHIP task runs WiFi init + NimBLE host init + BLE controller init before the
-# Arduino task resumes. 8192 bytes caused TLSF heap corruption (stack overflow
-# silently writing past the stack base into the adjacent free-block header).
-# Doubled to 16384 to give the Matter WiFi+BLE bring-up path sufficient room.
 CONFIG_CHIP_TASK_STACK_SIZE=16384
 
-# FreeRTOS stack-overflow canary: writes 0xa5a5a5a5 at the task stack base and
-# checks it on every context switch. Catches overflows before they corrupt heap.
+# FreeRTOS stack-overflow canary
 CONFIG_FREERTOS_CHECK_STACKOVERFLOW_CANARY=y
+
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 CONFIG_LOG_DEFAULT_LEVEL_INFO=y

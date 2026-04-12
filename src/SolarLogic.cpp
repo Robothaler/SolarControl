@@ -13,21 +13,11 @@
 
 // Vorwärts-Deklarationen statt #include "MatterDevices.h"
 // → vermeidet LWIP/IPAddress Namenskonflikt
+// Nur noch die Funktionen, die SolarLogic tatsächlich aufruft:
 namespace MatterDevices {
-    esp_err_t updateTemperature(esp_matter::endpoint_t* ep, float tempCelsius);
     esp_err_t updatePumpState(bool running);
-    esp_err_t updateValveState(bool poolMode);
+    esp_err_t updateValveFeedback(uint8_t mode);    // 0=BOILER, 1=POOL
     esp_err_t updateCirculationState(bool on);
-    esp_err_t updateIlluminationState(bool on);
-    esp_err_t updateValveStatus(bool ok);
-    esp_err_t updateLevelWarning(bool warn);
-    esp_err_t updateMotionDetected(bool detected);
-
-    // Endpoint-Handles (extern deklariert in MatterDevices.cpp)
-    extern esp_matter::endpoint_t* epRoofTemp;
-    extern esp_matter::endpoint_t* epBoilerTemp;
-    extern esp_matter::endpoint_t* epStorageTemp;
-    extern esp_matter::endpoint_t* epBackflowTemp;
 }
 
 static const char* TAG = "SolarLogic";
@@ -189,18 +179,10 @@ void readTemperatures()
         }
 
         dsConversionPending = false;
-
-        // ── Matter Attribute aktualisieren ──────────────────────────────────
-        // (nur nach erfolgreicher DS18B20-Konvertierung, MAX31865 immer sofort)
-        MatterDevices::updateTemperature(MatterDevices::epStorageTemp,
-                                          state.storageTemp);
-        MatterDevices::updateTemperature(MatterDevices::epBackflowTemp,
-                                          state.backflowTemp);
+        // DS18B20-Werte werden in main.cpp loop() via MatterDevices::updateTemperature()
+        // publiziert – DS18B20 Endpoints (Puffer, Rücklauf) sind im neuen
+        // Matter-Modell nicht mehr vorgesehen (nur EP4=Dach, EP5=Boiler).
     }
-
-    // MAX31865 Matter-Updates immer sofort (kein Konvertierungswarten):
-    MatterDevices::updateTemperature(MatterDevices::epRoofTemp,   state.roofTemp);
-    MatterDevices::updateTemperature(MatterDevices::epBoilerTemp,  state.boilerTemp);
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -233,8 +215,6 @@ void readLevelSensor()
 
     ESP_LOGD(TAG, "Pegelsonde: ADC=%d → %.1f%% %s",
              adcVal, pct, state.levelWarn ? "⚠ WARNUNG" : "OK");
-
-    MatterDevices::updateLevelWarning(state.levelWarn);
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -343,7 +323,7 @@ void setValve(bool poolMode)
 {
     state.valvePool = poolMode;
     digitalWrite(PIN_RELAY_VALVE, poolMode ? RELAY_ON : RELAY_OFF);
-    MatterDevices::updateValveState(poolMode);
+    MatterDevices::updateValveFeedback(poolMode ? 1 : 0);  // 1=POOL, 0=BOILER
     ESP_LOGI(TAG, "Ventil: %s", poolMode ? "POOL" : "BOILER");
 }
 
@@ -361,7 +341,6 @@ void setIllumination(bool on)
     if (state.illuminationOn == on) return;
     state.illuminationOn = on;
     digitalWrite(PIN_RELAY_ILLUM, on ? RELAY_ON : RELAY_OFF);
-    MatterDevices::updateIlluminationState(on);
     ESP_LOGI(TAG, "Beleuchtung: %s", on ? "EIN" : "AUS");
 }
 
@@ -369,11 +348,7 @@ void setMotionPower(bool on)
 {
     state.motionPowerOn = on;
     digitalWrite(PIN_MOTION_POWER, on ? HIGH : LOW);
-    if (!on) {
-        // Sensor ausgeschaltet → Zustand zurücksetzen
-        state.motionDetected = false;
-        MatterDevices::updateMotionDetected(false);
-    }
+    if (!on) state.motionDetected = false;
     ESP_LOGI(TAG, "Bewegungsmelder Power: %s", on ? "EIN" : "AUS");
 }
 
@@ -486,7 +461,6 @@ void handleMotion()
     if (detected != lastMotion) {
         lastMotion           = detected;
         state.motionDetected = detected;
-        MatterDevices::updateMotionDetected(detected);
         ESP_LOGI(TAG, "Bewegung: %s", detected ? "ERKANNT" : "KEINE");
     }
 }

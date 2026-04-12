@@ -8,6 +8,7 @@ idf_component_register(
         "MatterDevices.cpp"
         "SolarLogic.cpp"
         "WebUI.cpp"
+        "CirculationLogic.cpp"
     INCLUDE_DIRS
         "."
         "../include"

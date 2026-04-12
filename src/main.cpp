@@ -11,8 +11,11 @@
 #include "Config.h"
 #include "MatterDevices.h"
 #include "SolarLogic.h"
+#include "CirculationLogic.h"
 #include "Display.h"
 #include "WebUI.h"
+#include <apps/esp_sntp.h>
+#include <time.h>
 
 static const char* TAG = "main";
 
@@ -21,6 +24,7 @@ static unsigned long lastTempRead      = 0;
 static unsigned long lastLevelRead     = 0;
 static unsigned long lastMatterUpdate  = 0;
 static unsigned long lastDisplayUpdate = 0;
+static unsigned long lastCircUpdate    = 0;
 
 // WebUI + OTA – einmalig starten wenn WiFi verbunden
 static volatile bool wifiServicesPending = false;
@@ -291,6 +295,7 @@ void setup()
 
     // Hardware
     SolarLogic::init();
+    CirculationLogic::init();
 
     // Display (vor Matter damit Boot-Screen erscheint)
     Display::init();
@@ -402,9 +407,19 @@ void setup()
     ESP_LOGI(TAG, "Setup abgeschlossen. Kommandos: GET_STATE | GET_POOL_NODE");
 }
 
-// ── WiFi-Services einmalig starten (WebUI + ArduinoOTA) ──────────────────────
+// ── WiFi-Services einmalig starten (WebUI + ArduinoOTA + SNTP) ───────────────
 static void startWifiServices()
 {
+    // SNTP – Echtzeit für CirculationLogic (Präsenzfenster, Legionellenschutz)
+    // Timezone aus Config.h setzen (POSIX TZ-String, z.B. CET/CEST).
+    setenv("TZ", TIMEZONE_POSIX, 1);
+    tzset();
+    esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);
+    esp_sntp_setservername(0, "pool.ntp.org");
+    esp_sntp_setservername(1, "time.cloudflare.com");
+    esp_sntp_init();
+    ESP_LOGI("main", "SNTP gestartet (TZ=%s)", TIMEZONE_POSIX);
+
     // WebUI (HTTP-Server Port 80, WebSocket /ws, OTA /update)
     WebUI::begin();
 
@@ -456,21 +471,28 @@ void loop()
     // Matter Attribut-Updates (alle 10s)
     if (now - lastMatterUpdate >= MATTER_UPDATE_INTERVAL_MS) {
         lastMatterUpdate = now;
+
+        // EP1: Betriebsmodus (spiegelt den aktuellen SolarLogic-Modus wider)
+        MatterDevices::updateControlMode(
+            static_cast<uint8_t>(SolarLogic::state.currentMode));
+
+        // EP2: Pumpenstatus (read-only aus Matter-Sicht)
         MatterDevices::updatePumpState(SolarLogic::state.pumpRunning);
-        MatterDevices::updateValveState(SolarLogic::state.valvePool);
-        MatterDevices::updateCirculationState(SolarLogic::state.circulationOn);
-        MatterDevices::updateIlluminationState(SolarLogic::state.illuminationOn);
-        MatterDevices::updateValveStatus(SolarLogic::state.valveStatusOK);
-        MatterDevices::updateMotionDetected(SolarLogic::state.motionDetected);
-        MatterDevices::updateLevelWarning(SolarLogic::state.levelWarn);
+
+        // EP3: Ventil-Rückmeldung – Hardware-Pin, entkoppelt von EP1
+        // valvePool=true → POOL(1), valvePool=false → BOILER(0)
+        MatterDevices::updateValveFeedback(
+            SolarLogic::state.valvePool
+                ? MatterDevices::VALVE_POOL
+                : MatterDevices::VALVE_BOILER);
+
+        // EP4: Dach-Kollektor Temperatur
         MatterDevices::updateTemperature(MatterDevices::epRoofTemp,
                                           SolarLogic::state.roofTemp);
+
+        // EP5: Boiler Temperatur
         MatterDevices::updateTemperature(MatterDevices::epBoilerTemp,
                                           SolarLogic::state.boilerTemp);
-        MatterDevices::updateTemperature(MatterDevices::epStorageTemp,
-                                          SolarLogic::state.storageTemp);
-        MatterDevices::updateTemperature(MatterDevices::epBackflowTemp,
-                                          SolarLogic::state.backflowTemp);
     }
 
     // Display Update (100ms)
@@ -481,6 +503,12 @@ void loop()
         } else {
             Display::update(5000);
         }
+    }
+
+    // Zirkulationslogik (jede Sekunde: Timer, Auto-Trigger, SNTP-Check)
+    if (now - lastCircUpdate >= 1000UL) {
+        lastCircUpdate = now;
+        CirculationLogic::update();
     }
 
     // Button & Bewegungsmelder (jeden Loop)
