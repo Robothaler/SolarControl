@@ -346,6 +346,11 @@ void setup()
     }
     ESP_LOGI(TAG, "Matter Stack gestartet");
 
+    // SupportedModes erneut setzen: init() schreibt bereits, aber start() lädt
+    // Attributwerte aus NVS und könnte dabei den Write überschreiben.
+    // postStart() stellt den korrekten Wert nach NVS-Initialisierung sicher.
+    MatterDevices::postStart();
+
         // ── QR-Code und Pairing-Code auslesen ────────────────────────────────────
     // KORRIGIERT: Direkte NVS-Methode – vermeidet nicht verfügbare CHIP Headers
     // esp-matter speichert Setup-PIN in "chip-factory" NVS Namespace

@@ -37,6 +37,10 @@ extern esp_matter::endpoint_t* epCirculation;    // EP6: Zirkulationspumpe
 // ── Initialisierung ───────────────────────────────────────────────────────────
 esp_err_t init(esp_matter::node_t* node);
 
+// Muss nach esp_matter::start() aufgerufen werden, damit chip::Platform::MemoryAlloc
+// verfügbar ist. Setzt SupportedModes auf EP1 (Betriebsmodus) und EP3 (Ventil-Feedback).
+esp_err_t postStart();
+
 // ── Attribut-Updates (aus SolarLogic → Matter) ───────────────────────────────
 
 // EP1: Betriebsmodus – aktuellen Modus publizieren (z.B. nach NVS-Restore)

@@ -105,6 +105,26 @@ CONFIG_ESP_MATTER_MAX_DYNAMIC_ENDPOINT_COUNT=12
 # NVS partition (64 KB) shared between PoolMaster config (~16 KB) and Matter (~32 KB)
 CONFIG_NVS_ENCRYPTION=n
 
+# ── Brownout detector ─────────────────────────────────────────────────────────
+# Default level 7 = 2.44V (already the lowest threshold, cannot go lower via config).
+# The 3.3V rail droops below 2.44V during simultaneous BLE radio init + PHY calibration.
+# PERMANENT FIX: solder a 470µF+ electrolytic cap between 3V3 and GND near the ESP32-S3.
+# TEMPORARY (while cap is not yet installed): disable BOD so the device can boot at all.
+# Re-enable (remove this line) once the capacitor is in place.
+CONFIG_ESP_BROWNOUT_DET=n
+
+# ── Coredump (crash debugging) ────────────────────────────────────────────────
+# Writes crash backtrace to the coredump flash partition (0xc20000, 72KB).
+# Decode after crash: esptool read-flash 0xc20000 0x12000 coredump.bin
+#   → python -m esp_coredump --chip esp32s3 info_corefile --core coredump.bin
+#      --core-format raw .pio/build/matter_serial/firmware.elf
+CONFIG_ESP_COREDUMP_ENABLE=y
+CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH=y
+CONFIG_ESP_COREDUMP_DATA_FORMAT_ELF=y
+CONFIG_ESP_COREDUMP_MAX_TASKS_NUM=64
+CONFIG_ESP_COREDUMP_TASK_STACK_SIZE=1024
+CONFIG_ESP_COREDUMP_CHECKSUM_CRC32=y
+
 # ── Stack / heap tuning ────────────────────────────────────────────────────────
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
 CONFIG_CHIP_TASK_STACK_SIZE=16384

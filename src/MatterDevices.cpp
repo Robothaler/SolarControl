@@ -40,6 +40,13 @@ esp_matter::endpoint_t* epRoofTemp      = nullptr;  // EP4
 esp_matter::endpoint_t* epBoilerTemp    = nullptr;  // EP5
 esp_matter::endpoint_t* epCirculation   = nullptr;  // EP6
 
+// ── TLV-Puffer für SupportedModes ────────────────────────────────────────────
+// Müssen (a) die Lifetime des Endpoints überleben und (b) für postStart()
+// zugänglich sein (postStart setzt SupportedModes erneut nach esp_matter::start(),
+// falls NVS-Initialisierung in start() den vorherigen Write überschreibt).
+static uint8_t s_tlvControl[256];
+static uint8_t s_tlvValve[128];
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Hilfsfunktion: SupportedModes-Liste als CHIP-TLV kodieren
 //
@@ -145,12 +152,9 @@ static esp_matter::endpoint_t* createModeSelectEP(
         return ep;  // EP bleibt nutzbar, SupportedModes ist leer
     }
 
-    esp_matter_attr_val_t val;
-    val.type     = ESP_MATTER_VAL_TYPE_ARRAY;
-    val.val.a.b  = tlvBuf;
-    val.val.a.s  = len;
-    val.val.a.n  = modeCount;
-    val.val.a.t  = 0;  // nicht verwendet bei Struct-Arrays
+    // esp_matter_array() setzt .t = data_size + 2 (2 Bytes Längenfeld),
+    // was von get_data_from_attr_val() als attribute_size für calloc verwendet wird.
+    esp_matter_attr_val_t val = esp_matter_array(tlvBuf, len, modeCount);
 
     esp_err_t err = esp_matter::attribute::update(
         ep_id, kClusterModeSelect, kAttrSupportedModes, &val);
@@ -199,8 +203,6 @@ esp_err_t init(esp_matter::node_t* node)
 
     // ── EP1: Betriebsmodus ────────────────────────────────────────────────────
     // Modi: AUTO(0), POOL(1), BOILER(2)
-    // Persistent: TLV-Puffer muss die Lifetime des Endpoints überleben
-    static uint8_t s_tlvControl[256];
     static const char* kControlLabels[] = { "AUTO", "POOL", "BOILER" };
     static const uint8_t kControlModes[] = { MODE_AUTO, MODE_POOL, MODE_BOILER };
 
@@ -234,7 +236,6 @@ esp_err_t init(esp_matter::node_t* node)
     // ── EP3: Ventil-Rückmeldung ───────────────────────────────────────────────
     // Modi: BOILER(0), POOL(1) – CurrentMode ist read-only (Feedback-Pin)
     // ChangeToMode-Befehle werden im attributeChangeCallback abgelehnt.
-    static uint8_t s_tlvValve[128];
     static const char* kValveLabels[] = { "BOILER", "POOL" };
     static const uint8_t kValveModes[] = { VALVE_BOILER, VALVE_POOL };
 
@@ -427,6 +428,59 @@ esp_err_t attributeChangeCallback(
             ESP_LOGI(TAG, "Matter → Zirkulation: Stop angefordert");
         }
         return ESP_OK;
+    }
+
+    return ESP_OK;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// postStart()
+//
+// Setzt SupportedModes auf EP1 und EP3 nach esp_matter::start().
+// Muss nach start() aufgerufen werden, weil attribute::update() für Array-Typen
+// chip::Platform::MemoryAlloc() benötigt, das erst innerhalb von start()
+// initialisiert wird. Vorherige Versuche in init() scheitern daher immer mit
+// ESP_ERR_NO_MEM ("Could not allocate value buffer").
+// ─────────────────────────────────────────────────────────────────────────────
+esp_err_t postStart()
+{
+    static const char*   kCtrlLabels[] = { "AUTO", "POOL", "BOILER" };
+    static const uint8_t kCtrlModes[]  = { MODE_AUTO, MODE_POOL, MODE_BOILER };
+    static const char*   kValvLabels[] = { "BOILER", "POOL" };
+    static const uint8_t kValvModes[]  = { VALVE_BOILER, VALVE_POOL };
+
+    // EP1: Betriebsmodus
+    if (epControlMode) {
+        uint16_t len = encodeSupportedModes(
+            s_tlvControl, sizeof(s_tlvControl), kCtrlLabels, kCtrlModes, 3);
+        if (len > 0) {
+            esp_matter_attr_val_t val = esp_matter_array(s_tlvControl, len, 3);
+            esp_err_t err = esp_matter::attribute::update(
+                esp_matter::endpoint::get_id(epControlMode),
+                kClusterModeSelect, kAttrSupportedModes, &val);
+            if (err == ESP_OK)
+                ESP_LOGI(TAG, "postStart: SupportedModes Betriebsmodus gesetzt");
+            else
+                ESP_LOGW(TAG, "postStart: SupportedModes Betriebsmodus: %s",
+                         esp_err_to_name(err));
+        }
+    }
+
+    // EP3: Ventil-Feedback
+    if (epValveFeedback) {
+        uint16_t len = encodeSupportedModes(
+            s_tlvValve, sizeof(s_tlvValve), kValvLabels, kValvModes, 2);
+        if (len > 0) {
+            esp_matter_attr_val_t val = esp_matter_array(s_tlvValve, len, 2);
+            esp_err_t err = esp_matter::attribute::update(
+                esp_matter::endpoint::get_id(epValveFeedback),
+                kClusterModeSelect, kAttrSupportedModes, &val);
+            if (err == ESP_OK)
+                ESP_LOGI(TAG, "postStart: SupportedModes Ventil-Feedback gesetzt");
+            else
+                ESP_LOGW(TAG, "postStart: SupportedModes Ventil-Feedback: %s",
+                         esp_err_to_name(err));
+        }
     }
 
     return ESP_OK;
