@@ -7,3 +7,4 @@ include/credentials.h
 include/index_html_gz.h
 managed_components
 sdkconfig.matter_serial
+dependencies.lock

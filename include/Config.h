@@ -11,6 +11,30 @@
 // ============================================================
 
 // ────────────────────────────────────────────────────────────
+// CREDENTIALS (außerhalb des Repos)
+// credentials.h liegt unter /home/robothaler/credentials/credentials.h und
+// definiert WIFI_SSID, WIFI_PASSWORD, WEBUI_USERNAME/_PASSWORD, OTA_PASSWORD …
+// (-I "/home/robothaler/credentials" wird in platformio.ini gesetzt).
+// Im CI / auf fremden Rechnern darf die Datei fehlen — dann greifen die
+// __has_include-Defaults weiter unten und das Gerät wartet auf Eingabe via
+// WebUI / Matter-Network-Commissioning.
+// ────────────────────────────────────────────────────────────
+#if defined(__has_include)
+  #if __has_include("credentials.h")
+    #include "credentials.h"
+  #endif
+#endif
+
+// Fallback-Defaults — niemals echte Zugangsdaten hier hinterlegen, diese Datei
+// landet im Repo!
+#ifndef WIFI_SSID
+  #define WIFI_SSID     ""
+#endif
+#ifndef WIFI_PASSWORD
+  #define WIFI_PASSWORD ""
+#endif
+
+// ────────────────────────────────────────────────────────────
 // SPI2 BUS – 2× MAX31865 PT1000
 // Shared Bus: SCK, MOSI, MISO gemeinsam
 // Eigener CS-Pin pro Sensor!
@@ -171,9 +195,18 @@ constexpr int      CIRC_WINDOW_END_H          = 23;               // 23:00
 // ZEITZONE (POSIX TZ-String)
 // Wird nach SNTP-Start gesetzt damit localtime_r() korrekte
 // Ortszeit liefert. Standardwert: Mitteleuropäische Zeit (CET/CEST).
+// Kann zur Laufzeit per WebUI überschrieben werden (NVS-Key tz).
 // ────────────────────────────────────────────────────────────
 #ifndef TIMEZONE_POSIX
   #define TIMEZONE_POSIX "CET-1CEST,M3.5.0,M10.5.0/3"
+#endif
+
+// SNTP-Server (Defaults; per WebUI überschreibbar)
+#ifndef NTP_SERVER_PRIMARY
+  #define NTP_SERVER_PRIMARY   "pool.ntp.org"
+#endif
+#ifndef NTP_SERVER_SECONDARY
+  #define NTP_SERVER_SECONDARY "time.cloudflare.com"
 #endif
 
 // NVS-Key für letzten Zirkulations-Lauf (uint32, Unix-Timestamp)
@@ -250,4 +283,17 @@ constexpr char NVS_KEY_POOL_EP_MODE[]   = "pool_ep_mode";  // uint16_t
 constexpr char NVS_KEY_SOLAR_MODE[]     = "solar_mode";    // uint8_t (SolarMode enum)
 constexpr char NVS_KEY_TEMP_DIFF_ON[]   = "tdiff_on";      // float
 constexpr char NVS_KEY_TEMP_DIFF_OFF[]  = "tdiff_off";     // float
+
+// WebUI-Settings (per HTTP/POST änderbar)
+constexpr char NVS_KEY_TZ[]             = "tz";            // string (POSIX TZ)
+constexpr char NVS_KEY_NTP1[]           = "ntp1";          // string
+constexpr char NVS_KEY_NTP2[]           = "ntp2";          // string
+constexpr char NVS_KEY_AP_FALLBACK[]    = "ap_fallback";   // uint8_t (0/1)
+
+// WiFi-Zugangsdaten (analog ESP32-PoolMaster Matter_dev).
+// Werden beim ersten Boot aus credentials.h vorbefüllt (Seed-on-empty) und
+// können über die WebUI-Settings überschrieben werden. Direkter Login per
+// esp_wifi_set_config() + esp_wifi_connect() — siehe MatterBridge::start().
+constexpr char NVS_KEY_WIFI_SSID[]      = "wifi_ssid";     // string (max 32)
+constexpr char NVS_KEY_WIFI_PASS[]      = "wifi_pass";     // string (max 64)
 

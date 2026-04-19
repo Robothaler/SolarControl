@@ -1,5 +1,9 @@
 #pragma once
-#include <Arduino.h>
+// Bewusst KEIN <Arduino.h> — würde via Arduino's IPAddress.h mit lwip's
+// INADDR_NONE-Makro kollidieren, sobald MatterBridge.cpp uns nach
+// MatterDevices.h (esp_matter -> lwip) einbindet. Wir brauchen hier nur
+// uint8_t, das liefert <cstdint>.
+#include <cstdint>
 
 namespace Display {
 

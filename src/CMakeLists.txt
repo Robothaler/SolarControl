@@ -5,10 +5,12 @@ idf_component_register(
     SRCS
         "main.cpp"
         "Display.cpp"
+        "MatterBridge.cpp"
         "MatterDevices.cpp"
         "SolarLogic.cpp"
-        "WebUI.cpp"
         "CirculationLogic.cpp"
+        "WebUI.cpp"
+        "WebSerial.cpp"
     INCLUDE_DIRS
         "."
         "../include"

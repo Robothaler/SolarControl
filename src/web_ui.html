@@ -18,38 +18,31 @@ main{max-width:960px;margin:0 auto;padding:16px;display:grid;grid-template-colum
 .card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px}
 .wide{grid-column:1/-1}
 h2{font-size:.68rem;text-transform:uppercase;letter-spacing:.1em;color:var(--dim);margin-bottom:12px}
-/* Temperature grid */
 .tgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 .titem{background:#111114;border-radius:8px;padding:10px 12px}
 .tlbl{font-size:.7rem;color:var(--dim)}
 .tval{font-size:1.45rem;font-weight:600;color:var(--accent);margin-top:3px;white-space:nowrap}
-/* Relay rows */
 .rows{display:flex;flex-direction:column;gap:8px}
 .row{display:flex;align-items:center;justify-content:space-between;padding:9px 12px;background:#111114;border-radius:8px;font-size:.9rem}
-/* Toggle switch */
 .tog{position:relative;width:44px;height:24px;flex-shrink:0}
 .tog input{opacity:0;width:0;height:0;position:absolute}
 .sl{position:absolute;inset:0;background:#3f3f46;border-radius:24px;cursor:pointer;transition:.2s}
 .sl:before{content:'';position:absolute;width:18px;height:18px;left:3px;top:3px;background:#fff;border-radius:50%;transition:.2s}
 input:checked+.sl{background:var(--green)}
 input:checked+.sl:before{transform:translateX(20px)}
-/* Mode buttons */
 .mbts{display:flex;gap:8px}
 .mbt{flex:1;padding:10px 4px;border:1px solid var(--border);background:#111114;color:var(--text);border-radius:8px;cursor:pointer;font-size:.85rem;transition:.15s}
 .mbt:hover{border-color:var(--accent)}
 .mbt.act{background:var(--accent);color:#000;border-color:var(--accent);font-weight:700}
-/* Badge */
 .bdg{display:inline-block;padding:2px 10px;border-radius:4px;font-size:.75rem;font-weight:500}
 .ok{background:rgba(34,197,94,.12);color:var(--green)}
 .err{background:rgba(239,68,68,.12);color:var(--red)}
-/* Info rows */
-.irow{display:flex;justify-content:space-between;align-items:center;padding:7px 0;font-size:.85rem;border-bottom:1px solid var(--border)}
+.warn{background:rgba(245,158,11,.12);color:var(--accent)}
+.irow{display:flex;justify-content:space-between;align-items:center;padding:7px 0;font-size:.85rem;border-bottom:1px solid var(--border);gap:8px}
 .irow:last-child{border:none}
-.ival{color:var(--accent);font-weight:500}
-/* Level bar */
+.ival{color:var(--accent);font-weight:500;font-variant-numeric:tabular-nums;text-align:right;word-break:break-all}
 .lvlbg{background:#111114;border-radius:6px;height:7px;margin-top:8px;overflow:hidden}
 .lvlfill{height:100%;background:var(--blue);border-radius:6px;transition:width .5s}
-/* OTA section */
 .otazone{border:2px dashed var(--border);border-radius:8px;padding:18px;text-align:center;cursor:pointer;transition:.2s;margin-bottom:10px}
 .otazone:hover{border-color:var(--accent)}
 #fwlbl{cursor:pointer;color:var(--dim);font-size:.9rem}
@@ -58,8 +51,39 @@ input:checked+.sl:before{transform:translateX(20px)}
 #otamsg{font-size:.85rem;color:var(--dim);margin-top:10px;text-align:center;min-height:18px}
 .pbg{background:#111114;border-radius:6px;height:6px;overflow:hidden;display:none;margin-top:8px}
 .pf{height:100%;background:var(--accent);border-radius:6px;width:0%;transition:width .3s}
-/* Section spacing */
 .sep{margin-top:16px}
+/* Matter card */
+.mwrap{display:flex;flex-direction:column;align-items:center;gap:10px}
+#qrbox{background:#fff;padding:12px;border-radius:8px;display:none;line-height:0}
+#qrbox img,#qrbox table{display:block;margin:auto;width:200px;height:200px;image-rendering:pixelated}
+#qrtxt{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.7rem;color:var(--dim);word-break:break-all;text-align:center;padding:8px;background:#111114;border-radius:6px;width:100%}
+#mpc{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:1.1rem;color:var(--accent);letter-spacing:.05em;font-weight:700;text-align:center}
+.mbtns{display:flex;gap:8px;width:100%;margin-top:6px}
+.mbtns button{flex:1;padding:10px;border:1px solid var(--border);background:#111114;color:var(--text);border-radius:8px;cursor:pointer;font-size:.85rem}
+.mbtns button:hover{border-color:var(--accent)}
+.mbtns .danger{color:var(--red);border-color:rgba(239,68,68,.3)}
+.mbtns .danger:hover{background:rgba(239,68,68,.08)}
+/* Settings inputs */
+.set{display:flex;flex-direction:column;gap:10px;margin-top:6px}
+.set label{display:flex;flex-direction:column;font-size:.75rem;color:var(--dim);gap:4px}
+.set input[type=text]{background:#111114;border:1px solid var(--border);color:var(--text);padding:8px 10px;border-radius:6px;font-size:.9rem;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.set input[type=text]:focus{outline:none;border-color:var(--accent)}
+.set .chk{flex-direction:row;align-items:center;gap:10px;color:var(--text);font-size:.9rem}
+#setmsg{font-size:.8rem;color:var(--dim);margin-top:6px;min-height:16px;text-align:center}
+/* WebSerial terminal */
+.term{background:#000;color:#d4d4d4;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.78rem;line-height:1.35;padding:10px 12px;border-radius:8px;height:280px;overflow-y:auto;white-space:pre-wrap;word-break:break-all;border:1px solid var(--border)}
+.term.off{opacity:.45}
+.terminp{display:flex;gap:6px;margin-top:8px}
+.terminp input{flex:1;background:#000;border:1px solid var(--border);color:#d4d4d4;padding:8px 10px;border-radius:6px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.85rem}
+.terminp input:focus{outline:none;border-color:var(--accent)}
+.terminp input:disabled{opacity:.4}
+.terminp button{padding:8px 14px;background:#111114;border:1px solid var(--border);color:var(--text);border-radius:6px;cursor:pointer;font-size:.85rem}
+.terminp button:hover{border-color:var(--accent)}
+.tbar{display:flex;gap:8px;margin-bottom:8px;align-items:center}
+.tbar .tstate{margin-left:auto;font-size:.75rem;color:var(--dim)}
+.tbar button{padding:6px 12px;background:#111114;border:1px solid var(--border);color:var(--text);border-radius:6px;cursor:pointer;font-size:.8rem}
+.tbar button:hover{border-color:var(--accent)}
+.tbar button.act{background:var(--green);color:#000;border-color:var(--green);font-weight:600}
 </style>
 </head>
 <body>
@@ -110,21 +134,92 @@ input:checked+.sl:before{transform:translateX(20px)}
     </div>
   </div>
 
-  <!-- Eingaenge + System -->
+  <!-- Eingaenge -->
   <div class="card">
     <h2>Eing&auml;nge</h2>
     <div class="irow"><span>Ventilstatus</span><span id="vs" class="bdg">-</span></div>
     <div class="irow"><span>Bewegungsmelder</span><span id="mv" class="bdg">-</span></div>
     <div class="irow"><span>F&uuml;llstand</span><span id="lv" class="ival">-</span></div>
     <div class="lvlbg"><div class="lvlfill" id="lb"></div></div>
+  </div>
 
-    <div class="sep">
-      <h2>System</h2>
-      <div class="irow"><span>IP-Adresse</span><span id="si" class="ival">-</span></div>
-      <div class="irow"><span>Matter</span><span id="sm" class="bdg">-</span></div>
-      <div class="irow"><span>Uptime</span><span id="su" class="ival">-</span></div>
-      <div class="irow"><span>Freier Heap</span><span id="sh" class="ival">-</span></div>
-      <div class="irow"><span>Version</span><span id="sv" class="ival">-</span></div>
+  <!-- Matter Commissioning -->
+  <div class="card wide">
+    <h2>Matter Commissioning</h2>
+    <div class="mwrap">
+      <div id="mstate" class="bdg warn">unbekannt</div>
+      <div id="qrbox"></div>
+      <div id="qrtxt">-</div>
+      <div style="font-size:.8rem;color:var(--dim);margin-top:4px">Manueller Pairing-Code:</div>
+      <div id="mpc">- - - -</div>
+      <div class="mbtns">
+        <button onclick="cmd('matter_open_commissioning',1)">Commissioning-Fenster (15 min)</button>
+        <button onclick="cmd('matter_status',1)">Status aktualisieren</button>
+        <button class="danger" onclick="onFactoryReset()">Factory Reset</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- System Info -->
+  <div class="card">
+    <h2>System</h2>
+    <div class="irow"><span>IP-Adresse</span><span id="si" class="ival">-</span></div>
+    <div class="irow"><span>WLAN RSSI</span><span id="sr" class="ival">-</span></div>
+    <div class="irow"><span>MAC-Adresse</span><span id="sma" class="ival">-</span></div>
+    <div class="irow"><span>Chip</span><span id="sc" class="ival">-</span></div>
+    <div class="irow"><span>Flash</span><span id="sf" class="ival">-</span></div>
+    <div class="irow"><span>PSRAM frei</span><span id="sp" class="ival">-</span></div>
+    <div class="irow"><span>Heap min</span><span id="shm" class="ival">-</span></div>
+    <div class="irow"><span>Reset-Grund</span><span id="srr" class="ival">-</span></div>
+    <div class="irow"><span>Uptime</span><span id="su" class="ival">-</span></div>
+    <div class="irow"><span>Freier Heap</span><span id="sh" class="ival">-</span></div>
+    <div class="irow"><span>Lokale Zeit</span><span id="slt" class="ival">-</span></div>
+    <div class="irow"><span>Version</span><span id="sv" class="ival">-</span></div>
+    <div class="mbtns" style="margin-top:10px">
+      <button onclick="if(confirm('ESP32 neu starten?'))cmd('reboot',1)">Neustart</button>
+    </div>
+  </div>
+
+  <!-- Settings -->
+  <div class="card">
+    <h2>Einstellungen</h2>
+    <div class="set">
+      <label>WLAN SSID
+        <input type="text" id="setSsid" placeholder="MeinWLAN" autocomplete="off">
+      </label>
+      <label>WLAN Passwort
+        <input type="password" id="setPass" placeholder="(unver&auml;ndert)" autocomplete="new-password">
+      </label>
+      <label>Zeitzone (POSIX TZ)
+        <input type="text" id="setTz" placeholder="CET-1CEST,M3.5.0,M10.5.0/3">
+      </label>
+      <label>NTP-Server prim&auml;r
+        <input type="text" id="setNtp1" placeholder="pool.ntp.org">
+      </label>
+      <label>NTP-Server sekund&auml;r
+        <input type="text" id="setNtp2" placeholder="time.cloudflare.com">
+      </label>
+      <label class="chk">
+        <input type="checkbox" id="setApFb"> WLAN-AP-Fallback aktivieren
+      </label>
+      <button class="otabtn" onclick="saveSettings()">Speichern</button>
+      <div id="setmsg"></div>
+    </div>
+  </div>
+
+  <!-- WebSerial (Remote-Wartung) -->
+  <div class="card wide">
+    <h2>WebSerial (Fernwartung)</h2>
+    <div class="tbar">
+      <button id="wsToggle" onclick="toggleWebSerial()">Starten</button>
+      <button onclick="clearTerm()">L&ouml;schen</button>
+      <span class="tstate" id="wsState">inaktiv</span>
+    </div>
+    <div class="term off" id="term"></div>
+    <div class="terminp">
+      <input type="text" id="termIn" placeholder="Kommando (HELP f&uuml;r Liste) - Enter zum Senden" disabled
+             onkeydown="if(event.key==='Enter')sendTerm()">
+      <button id="termBtn" onclick="sendTerm()" disabled>Senden</button>
     </div>
   </div>
 
@@ -141,24 +236,37 @@ input:checked+.sl:before{transform:translateX(20px)}
   </div>
 
 </main>
+
+<!-- Optional: kompakte QR-Code-Library (~4KB).
+     Kein Hard-Requirement: Wenn das CDN blockiert ist, fällt das UI auf
+     Klartext + Manual-Pairing-Code zurück. -->
+<script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js" async onerror="window.qrLoadFail=true"></script>
+
 <script>
-var ws, rt;
+var ws, rt, lastMatterQr = '';
 
 function connect() {
   ws = new WebSocket('ws://' + location.host + '/ws');
-  ws.onopen  = function() { document.getElementById('dot').className = 'on'; clearTimeout(rt); };
+  ws.onopen  = function() { document.getElementById('dot').className = 'on'; clearTimeout(rt); cmd('matter_status',1); loadSettings(); };
   ws.onclose = function() { document.getElementById('dot').className = '';   rt = setTimeout(connect, 3000); };
-  ws.onmessage = function(e) { try { apply(JSON.parse(e.data)); } catch(x) {} };
+  ws.onmessage = function(e) {
+    try {
+      var d = JSON.parse(e.data);
+      if      (d.type === 'matter')    applyMatter(d);
+      else if (d.type === 'webserial') applyWebSerial(d);
+      else                             applyStatus(d);
+    } catch(x) {}
+  };
 }
 
 function tf(v) { return (typeof v === 'number') ? v.toFixed(1) + '\u00B0C' : '--\u00B0C'; }
 
 function ut(s) {
   s = s || 0;
-  var h = Math.floor(s / 3600);
+  var d = Math.floor(s / 86400);
+  var h = Math.floor((s % 86400) / 3600);
   var m = Math.floor((s % 3600) / 60);
-  var sec = s % 60;
-  return (h ? h + 'h ' : '') + (m ? m + 'm ' : '') + sec + 's';
+  return (d ? d + 'd ' : '') + (h ? h + 'h ' : '') + m + 'm';
 }
 
 function chk(id, v) {
@@ -166,13 +274,18 @@ function chk(id, v) {
   if (e) e.checked = !!v;
 }
 
-function apply(d) {
-  document.getElementById('t0').textContent = tf(d.roofTemp);
-  document.getElementById('t1').textContent = tf(d.boilerTemp);
-  document.getElementById('t2').textContent = tf(d.storageTemp);
-  document.getElementById('t3').textContent = tf(d.backflowTemp);
-  document.getElementById('t4').textContent = tf(d.poolTemp);
-  document.getElementById('t5').textContent = tf(d.poolSollTemp);
+function setText(id, v) {
+  var e = document.getElementById(id);
+  if (e) e.textContent = (v === undefined || v === null) ? '-' : v;
+}
+
+function applyStatus(d) {
+  setText('t0', tf(d.roofTemp));
+  setText('t1', tf(d.boilerTemp));
+  setText('t2', tf(d.storageTemp));
+  setText('t3', tf(d.backflowTemp));
+  setText('t4', tf(d.poolTemp));
+  setText('t5', tf(d.poolSollTemp));
 
   ['m0','m1','m2'].forEach(function(id) { document.getElementById(id).classList.remove('act'); });
   var mi = { 'AUTO':'m0', 'MANUAL_POOL':'m1', 'MANUAL_BOILER':'m2' };
@@ -193,25 +306,175 @@ function apply(d) {
   mv.className   = 'bdg ' + (d.motionDetected ? 'ok' : '');
 
   var lp = d.levelPct || 0;
-  document.getElementById('lv').textContent = lp.toFixed(1) + '%' + (d.levelWarn ? ' \u26A0' : '');
+  setText('lv', lp.toFixed(1) + '%' + (d.levelWarn ? ' \u26A0' : ''));
   document.getElementById('lb').style.width = Math.min(100, lp).toFixed(0) + '%';
 
-  document.getElementById('ip').textContent = d.wifiIP || '-';
-  document.getElementById('si').textContent = d.wifiIP || '-';
+  setText('ip', d.wifiIP);
+  setText('si', d.wifiIP);
+  setText('sr', d.rssi !== undefined ? d.rssi + ' dBm' : '-');
 
-  var sm = document.getElementById('sm');
-  sm.textContent = d.commissioned ? 'Verbunden' : 'Ausstehend';
-  sm.className   = 'bdg ' + (d.commissioned ? 'ok' : 'err');
+  // Commissioning-Status (auch in Matter-Karte spiegeln)
+  var ms = document.getElementById('mstate');
+  if (d.commissioned) { ms.textContent = 'Verbunden (' + (d.fabrics || 0) + ' Fabric)'; ms.className = 'bdg ok'; }
+  else                { ms.textContent = 'Wartet auf Pairing'; ms.className = 'bdg warn'; }
 
-  document.getElementById('su').textContent = ut(d.uptime);
-  document.getElementById('sh').textContent = ((d.freeHeap || 0) / 1024).toFixed(0) + ' kB';
-  document.getElementById('sv').textContent = d.version || '-';
+  setText('su', ut(d.uptime));
+  setText('sh', ((d.freeHeap || 0) / 1024).toFixed(0) + ' kB');
+  setText('slt', d.localTime);
+  setText('sv', d.version);
+
+  // WebSerial-Status spiegeln (Server entscheidet, z.B. Auto-Stop bei Disconnect)
+  if (typeof d.webSerial === 'boolean') setWebSerialUi(d.webSerial);
+
+  if (d.sys) {
+    setText('sc',  d.sys.chip + ' rev' + d.sys.rev + ' (' + d.sys.cores + ' Cores)');
+    setText('sf',  d.sys.flashMB + ' MB');
+    setText('sp',  d.sys.psramFreeKB + ' kB');
+    setText('shm', (d.sys.heapMinB / 1024).toFixed(0) + ' kB');
+    setText('srr', d.sys.resetReason);
+    setText('sma', d.sys.mac);
+  }
+}
+
+function applyMatter(d) {
+  var ms = document.getElementById('mstate');
+  if (d.commissioned) { ms.textContent = 'Verbunden (' + d.fabrics + ' Fabric)'; ms.className = 'bdg ok'; }
+  else                { ms.textContent = 'Wartet auf Pairing'; ms.className = 'bdg warn'; }
+
+  setText('mpc', d.manualPairingCode || '-');
+  setText('qrtxt', d.qrCode || '-');
+
+  // QR-Code rendern (qrcode-generator). Wenn die Library nicht geladen ist
+  // (z.B. Offline-Setup), bleibt nur der Klartext-Payload sichtbar.
+  if (d.qrCode && d.qrCode !== lastMatterQr) {
+    lastMatterQr = d.qrCode;
+    renderQr(d.qrCode);
+  }
+}
+
+function renderQr(payload) {
+  var box = document.getElementById('qrbox');
+  if (typeof qrcode !== 'function' || window.qrLoadFail) {
+    box.style.display = 'none';
+    return;
+  }
+  try {
+    var qr = qrcode(0, 'M');           // typeNumber=auto, errCorrect M
+    qr.addData(payload);
+    qr.make();
+    box.innerHTML = qr.createImgTag(5, 8);  // cellSize=5, margin=8
+    box.style.display = 'block';
+  } catch(e) {
+    box.style.display = 'none';
+  }
 }
 
 function cmd(c, v) {
   if (ws && ws.readyState === 1) ws.send(JSON.stringify({ cmd: c, value: v }));
 }
 
+// ── WebSerial (Fernwartung) ────────────────────────────────────────────────
+var wsActive = false;
+var TERM_MAX_CHARS = 64 * 1024;   // Cap fürs DOM (~64 KB Backlog im Terminal)
+
+function setWebSerialUi(active) {
+  wsActive = !!active;
+  var btn = document.getElementById('wsToggle');
+  var state = document.getElementById('wsState');
+  var term = document.getElementById('term');
+  var inp = document.getElementById('termIn');
+  var sb = document.getElementById('termBtn');
+  btn.textContent = wsActive ? 'Stoppen' : 'Starten';
+  btn.className   = wsActive ? 'act'     : '';
+  state.textContent = wsActive ? 'aktiv (streamt Logs + Antworten)' : 'inaktiv';
+  term.classList.toggle('off', !wsActive);
+  inp.disabled = !wsActive;
+  sb.disabled  = !wsActive;
+}
+
+function toggleWebSerial() {
+  cmd(wsActive ? 'webserial_stop' : 'webserial_start', 1);
+}
+
+function clearTerm() {
+  document.getElementById('term').textContent = '';
+}
+
+function applyWebSerial(d) {
+  if (typeof d.data !== 'string') return;
+  var t = document.getElementById('term');
+  // Auto-Scroll nur, wenn Nutzer am Ende war (sonst lesefreundlich pausieren)
+  var atBottom = (t.scrollTop + t.clientHeight + 40) >= t.scrollHeight;
+  t.textContent += d.data;
+  if (t.textContent.length > TERM_MAX_CHARS) {
+    t.textContent = t.textContent.slice(-TERM_MAX_CHARS);
+  }
+  if (atBottom) t.scrollTop = t.scrollHeight;
+}
+
+function sendTerm() {
+  var inp = document.getElementById('termIn');
+  var line = inp.value.trim();
+  if (!line) return;
+  cmd('webserial_input', line);
+  inp.value = '';
+}
+
+function onFactoryReset() {
+  if (!confirm('Matter Factory Reset? Alle Pairings werden gel\u00F6scht und das Ger\u00E4t startet neu.')) return;
+  cmd('factory_reset', 1);
+}
+
+// ── Settings (HTTP /api/settings) ──────────────────────────────────────────
+function loadSettings() {
+  fetch('/api/settings').then(function(r){ return r.json(); }).then(function(s){
+    document.getElementById('setTz').value   = s.tz   || '';
+    document.getElementById('setNtp1').value = s.ntp1 || '';
+    document.getElementById('setNtp2').value = s.ntp2 || '';
+    document.getElementById('setApFb').checked = !!s.apFallback;
+    document.getElementById('setSsid').value = s.ssid || '';
+    var passInp = document.getElementById('setPass');
+    passInp.value = '';
+    passInp.placeholder = s.passSet ? '(unver\u00E4ndert \u2014 leer lassen zum Beibehalten)' : '(noch nicht gesetzt)';
+  }).catch(function(){});
+}
+
+function saveSettings() {
+  var ssid = document.getElementById('setSsid').value.trim();
+  var pass = document.getElementById('setPass').value;       // nicht trimmen!
+  var body = {
+    tz:   document.getElementById('setTz').value.trim(),
+    ntp1: document.getElementById('setNtp1').value.trim(),
+    ntp2: document.getElementById('setNtp2').value.trim(),
+    apFallback: document.getElementById('setApFb').checked
+  };
+  // WiFi-Felder nur senden wenn der Nutzer sie tats\u00E4chlich angefasst hat.
+  // Leeres Pass-Feld bedeutet "unver\u00E4ndert"; wenn er gezielt l\u00F6schen
+  // m\u00F6chte, kann er die SSID neu eintragen + leeres Passwort \u2014 daf\u00FCr
+  // setzen wir clearPass=true wenn er ein leeres Pass-Feld absendet UND eine
+  // neue SSID angegeben hat.
+  if (ssid) body.ssid = ssid;
+  if (pass) body.pass = pass;
+  if (ssid && !pass) body.clearPass = false; // keep alten Pass
+
+  var msg = document.getElementById('setmsg');
+  msg.textContent = 'Speichere...';
+  fetch('/api/settings', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  }).then(function(r){ return r.ok ? r.json() : Promise.reject('HTTP ' + r.status); })
+  .then(function(j){
+    var hint = j.wifiReconfigured
+      ? ' \u2014 WLAN reconnect l\u00E4uft, IP nach 5\u20137 s neu pr\u00FCfen'
+      : ' (NTP wirkt nach Reboot)';
+    msg.textContent = '\u2713 Gespeichert' + hint;
+    document.getElementById('setPass').value = '';
+  })
+  .catch(function(e){ msg.textContent = '\u2717 ' + e; });
+}
+
+// ── OTA ───────────────────────────────────────────────────────────────────
 function onFile(inp) {
   var f = inp.files[0];
   document.getElementById('fwlbl').textContent = f

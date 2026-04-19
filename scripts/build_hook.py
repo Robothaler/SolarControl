@@ -138,6 +138,30 @@ def _read_cmake_cache(cmake_cache_path):
     return result
 
 
+def _resolve_idf_path(build_dir):
+    """Gibt IDF_PATH zurück – aus CMakeCache.txt oder PlatformIO-Paketverzeichnis.
+
+    Auf frischen Builds existiert CMakeCache.txt noch nicht. In dem Fall
+    wird der bekannte PlatformIO-Pfad ~/.platformio/packages/framework-espidf
+    als Fallback verwendet.
+    """
+    # 1. Versuch: CMakeCache.txt (zuverlässigste Quelle)
+    cache = _read_cmake_cache(os.path.join(build_dir, "CMakeCache.txt"))
+    toolchain_file = cache.get("CMAKE_TOOLCHAIN_FILE", "")
+    idx = toolchain_file.find("/tools/cmake/")
+    if idx >= 0:
+        idf_path = toolchain_file[:idx]
+        if os.path.isdir(idf_path):
+            return idf_path
+
+    # 2. Fallback: PlatformIO-Paketverzeichnis (existiert auch vor cmake-Lauf)
+    pio_idf = os.path.join(os.path.expanduser("~"), ".platformio", "packages", "framework-espidf")
+    if os.path.isdir(pio_idf):
+        return pio_idf
+
+    return ""
+
+
 def _cmake_regenerate(build_dir, project_dir):
     """Ruft cmake auf um build.ninja neu zu generieren.
 
@@ -247,62 +271,74 @@ _RMAKER_CERTS = [
     "rmaker_ota_server.crt",
 ]
 
-if os.path.isdir(_RMAKER_CERTS_DIR):
-    # IDF_PATH aus CMakeCache.txt ableiten (bereits in _build_dir verfügbar)
-    _cache = _read_cmake_cache(os.path.join(_build_dir, "CMakeCache.txt"))
-    _toolchain_file = _cache.get("CMAKE_TOOLCHAIN_FILE", "")
-    _idf_path = ""
-    _idx = _toolchain_file.find("/tools/cmake/")
-    if _idx >= 0:
-        _idf_path = _toolchain_file[:_idx]
+def _pre_generate_certs(label, certs_dir, cert_names, build_dir, project_dir):
+    """Generiert .S-Dateien aus Zertifikaten via data_file_embed_asm.cmake.
 
-    _embed_script = os.path.join(_idf_path, "tools", "cmake", "scripts", "data_file_embed_asm.cmake") if _idf_path else ""
+    Hintergrund: target_add_binary_data() erzeugt cmake CUSTOM_COMMANDs die
+    PlatformIO/pioarduino nie ausführt (SCons baut direkt aus dem Codemodel).
+    Fix: .S-Dateien vorab generieren damit SCons sie direkt findet.
+    """
+    if not os.path.isdir(certs_dir):
+        print(f"[Hook] {label} server_certs nicht gefunden — wird beim ersten Build heruntergeladen")
+        return
 
-    _cmake_bin = os.path.join(
-        os.path.expanduser("~"),
-        ".platformio", "packages", "tool-cmake", "bin", "cmake",
+    idf_path = _resolve_idf_path(build_dir)
+    if not idf_path:
+        print(f"[Hook] WARNUNG: IDF_PATH nicht ableitbar — {label} Zertifikat-Generierung übersprungen")
+        return
+
+    embed_script = os.path.join(idf_path, "tools", "cmake", "scripts", "data_file_embed_asm.cmake")
+    if not os.path.exists(embed_script):
+        print(f"[Hook] WARNUNG: data_file_embed_asm.cmake nicht gefunden — {label} übersprungen")
+        return
+
+    cmake_bin = os.path.join(
+        os.path.expanduser("~"), ".platformio", "packages", "tool-cmake", "bin", "cmake",
     )
-    if not os.path.exists(_cmake_bin):
+    if not os.path.exists(cmake_bin):
         import shutil as _shutil
-        _cmake_bin = _shutil.which("cmake") or _cmake_bin
+        cmake_bin = _shutil.which("cmake") or cmake_bin
+    if not os.path.exists(cmake_bin):
+        print(f"[Hook] WARNUNG: cmake nicht gefunden — {label} Zertifikat-Generierung übersprungen")
+        return
 
     # Verdoppeltes Verzeichnis erstellen: BUILD_DIR/rel_build_dir/
-    _rel_build = os.path.relpath(_build_dir, project_dir)   # e.g. .pio/build/matter_serial
-    _doubled_dir = os.path.join(_build_dir, _rel_build)
-    os.makedirs(_doubled_dir, exist_ok=True)
+    rel_build = os.path.relpath(build_dir, project_dir)
+    os.makedirs(os.path.join(build_dir, rel_build), exist_ok=True)
 
-    if not _idf_path:
-        print("[Hook] WARNUNG: IDF_PATH nicht ableitbar — esp_rainmaker Zertifikat-Generierung übersprungen")
-    elif not os.path.exists(_embed_script):
-        print(f"[Hook] WARNUNG: data_file_embed_asm.cmake nicht gefunden ({_embed_script}) — übersprungen")
-    elif not os.path.exists(_cmake_bin):
-        print(f"[Hook] WARNUNG: cmake nicht gefunden — esp_rainmaker Zertifikat-Generierung übersprungen")
-    else:
-        for _cert_name in _RMAKER_CERTS:
-            _cert_file = os.path.join(_RMAKER_CERTS_DIR, _cert_name)
-            _s_file    = os.path.join(_build_dir, _cert_name + ".S")
-            if not os.path.exists(_cert_file):
-                print(f"[Hook] WARNUNG: {_cert_name} nicht gefunden — übersprungen")
-                continue
-            if os.path.exists(_s_file) and os.path.getmtime(_s_file) >= os.path.getmtime(_cert_file):
-                print(f"[Hook] {_cert_name}.S aktuell — übersprungen")
-                continue
-            _result = subprocess.run(
-                [
-                    _cmake_bin,
-                    f"-DDATA_FILE={_cert_file}",
-                    f"-DSOURCE_FILE={_s_file}",
-                    "-DFILE_TYPE=TEXT",
-                    "-P", _embed_script,
-                ],
-                capture_output=True,
-                text=True,
-            )
-            if _result.returncode == 0:
-                print(f"[Hook] {_cert_name}.S generiert → {_s_file}")
-            else:
-                print(f"[Hook] FEHLER: {_cert_name}.S Generierung fehlgeschlagen (code {_result.returncode})")
-                if _result.stderr:
-                    print(_result.stderr.strip())
-else:
-    print("[Hook] esp_rainmaker server_certs nicht gefunden — wird beim ersten Build heruntergeladen")
+    for cert_name in cert_names:
+        cert_file = os.path.join(certs_dir, cert_name)
+        s_file    = os.path.join(build_dir, cert_name + ".S")
+        if not os.path.exists(cert_file):
+            print(f"[Hook] WARNUNG: {cert_name} nicht gefunden — übersprungen")
+            continue
+        if os.path.exists(s_file) and os.path.getmtime(s_file) >= os.path.getmtime(cert_file):
+            print(f"[Hook] {cert_name}.S aktuell — übersprungen")
+            continue
+        result = subprocess.run(
+            [cmake_bin, f"-DDATA_FILE={cert_file}", f"-DSOURCE_FILE={s_file}",
+             "-DFILE_TYPE=TEXT", "-P", embed_script],
+            capture_output=True, text=True,
+        )
+        if result.returncode == 0:
+            print(f"[Hook] {cert_name}.S generiert → {s_file}")
+        else:
+            print(f"[Hook] FEHLER: {cert_name}.S Generierung fehlgeschlagen (code {result.returncode})")
+            if result.stderr:
+                print(result.stderr.strip())
+
+
+_pre_generate_certs(
+    "esp_rainmaker",
+    os.path.join(project_dir, "managed_components", "espressif__esp_rainmaker", "server_certs"),
+    ["rmaker_mqtt_server.crt", "rmaker_claim_service_server.crt", "rmaker_ota_server.crt"],
+    _build_dir, project_dir,
+)
+
+# ── 4. esp_insights Zertifikat vorab generieren ────────────────────────────
+_pre_generate_certs(
+    "esp_insights",
+    os.path.join(_INSIGHTS_DIR, "server_certs"),
+    ["https_server.crt", "mqtt_server.crt"],
+    _build_dir, project_dir,
+)

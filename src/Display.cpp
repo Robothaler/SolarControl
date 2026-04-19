@@ -118,7 +118,7 @@ static void recoverI2cBus()
 
 // Set DISPLAY_ENABLED 0 when no SSD1306 is wired (avoids ~80 I2C error lines
 // on every boot from u8g2's init sequence writing to a non-existent device).
-#define DISPLAY_ENABLED 0
+#define DISPLAY_ENABLED 1
 
 void init()
 {

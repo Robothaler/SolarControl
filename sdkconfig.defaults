@@ -60,21 +60,29 @@ CONFIG_ARDUINO_SELECTIVE_HTTPClient=n
 CONFIG_FREERTOS_HZ=1000
 CONFIG_FREERTOS_UNICORE=n
 
-# ── Bluetooth (NimBLE for Matter commissioning) ────────────────────────────────
+# ── Bluetooth (BLE) für Matter-Commissioning aktiviert ───────────────────────
+# Matter-Commissioning via CHIPoBLE: BLE wird nur während des Pairings benötigt
+# und nach erfolgreichem Commissioning automatisch heruntergefahren (kein
+# Dauer-Stromverbrauch, kein Dauer-RAM-Bedarf).
+#
+# WICHTIG: BLE-Controller-Init und WiFi-PHY-Init laufen beim Boot kurz parallel
+# und ziehen einen ~600 mA Stromspike. Ohne ausreichenden Stütz-Kondensator
+# (≥470 µF Low-ESR + 100 nF Keramik) am 3V3-Pin des Moduls fällt die Spannung
+# unter ~2,5 V und der HW-Brownout-Detektor löst aus → Boot-Loop.
+# Vor dem Aktivieren prüfen, dass der Cap verbaut ist!
 CONFIG_BT_ENABLED=y
+CONFIG_BT_CONTROLLER_ENABLED=y
+# BLE-Only-Modus (S3 hat ohnehin kein Classic-BT)
+CONFIG_BTDM_CTRL_MODE_BLE_ONLY=y
+CONFIG_BTDM_CTRL_MODE_BR_EDR_ONLY=n
+CONFIG_BTDM_CTRL_MODE_BTDM=n
+# Matter auf ESP32-S3 nutzt NimBLE als Host-Stack (nicht Bluedroid)
 CONFIG_BT_NIMBLE_ENABLED=y
-CONFIG_BT_CONTROLLER_DISABLED=n
-# BLE advertising used by Matter for commissioning; disable after commissioned if desired
+CONFIG_BT_BLUEDROID_ENABLED=n
+# Matter-over-BLE einschalten
 CONFIG_ENABLE_CHIPOBLE=y
-# Allocate NimBLE host heap from PSRAM instead of internal RAM
-CONFIG_BT_NIMBLE_MEM_ALLOC_MODE_EXTERNAL=y
-# Only 1 simultaneous BLE connection needed (Matter commissioning)
-CONFIG_BT_NIMBLE_MAX_CONNECTIONS=1
-# BLE controller: max activities (advertising + 1 connection = 2 needed for Matter)
-# Default is 6; each activity entry is ~few-hundred bytes of internal DMA RAM.
-CONFIG_BT_CTRL_BLE_MAX_ACT=2
-# Duplicate scan filter – we never scan, so shrink this table from 30 to 10
-CONFIG_BT_CTRL_ADV_DUP_FILT_MAX=10
+# BLE-Controller auf Core 0 pinnen (WiFi läuft auf Core 1, siehe oben)
+CONFIG_BT_CTRL_PINNED_TO_CORE_0=y
 
 # ── OpenThread — disabled (Wi-Fi only, no Thread border router) ────────────────
 CONFIG_OPENTHREAD_ENABLED=n
@@ -106,12 +114,18 @@ CONFIG_ESP_MATTER_MAX_DYNAMIC_ENDPOINT_COUNT=12
 CONFIG_NVS_ENCRYPTION=n
 
 # ── Brownout detector ─────────────────────────────────────────────────────────
-# Default level 7 = 2.44V (already the lowest threshold, cannot go lower via config).
-# The 3.3V rail droops below 2.44V during simultaneous BLE radio init + PHY calibration.
-# PERMANENT FIX: solder a 470µF+ electrolytic cap between 3V3 and GND near the ESP32-S3.
-# TEMPORARY (while cap is not yet installed): disable BOD so the device can boot at all.
-# Re-enable (remove this line) once the capacitor is in place.
-CONFIG_ESP_BROWNOUT_DET=n
+# Wieder aktiviert. Voraussetzung: Stütz-Kondensator (≥470 µF Low-ESR + 100 nF
+# Keramik) am 3V3-Pin des Moduls ist verbaut, damit der Stromspike beim
+# parallelen BLE+WiFi-PHY-Init keinen Spannungseinbruch unter ~2,5 V erzeugt.
+# Threshold-Level 7 (Default auf S3) ≈ 2,51 V — niedrigere Schwelle ist HW-seitig
+# nicht möglich. Die SW-Behandlung (Panic-Print + esp_restart) ist aktiv.
+CONFIG_ESP_BROWNOUT_DET=y
+CONFIG_ESP_BROWNOUT_DET_LVL_SEL_7=y
+CONFIG_ESP_BROWNOUT_DET_LVL=7
+# Bei Trigger ins Software-Panic gehen (statt direktem HW-Reset) — gibt im Log
+# eine eindeutige "Brownout detector was triggered"-Zeile aus, bevor restartet
+# wird. Erleichtert die Diagnose, falls der Cap doch nicht reicht.
+CONFIG_ESP_SYSTEM_BROWNOUT_INTR=y
 
 # ── Coredump (crash debugging) ────────────────────────────────────────────────
 # Writes crash backtrace to the coredump flash partition (0xc20000, 72KB).
