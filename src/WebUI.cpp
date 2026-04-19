@@ -15,6 +15,7 @@
 #include <esp_ota_ops.h>
 #include <esp_mac.h>
 #include <esp_heap_caps.h>
+#include <esp_wifi.h>     // esp_wifi_sta_get_ap_info, wifi_ap_record_t
 #include <Update.h>
 #include <WiFi.h>
 #include <ArduinoJson.h>
@@ -31,13 +32,15 @@
 
 static const char* TAG = "WebUI";
 
-// ─── Credentials (override in /home/robothaler/credentials/credentials.h) ─────
-#ifndef WEBUI_USERNAME
-  #define WEBUI_USERNAME "admin"
-#endif
-#ifndef WEBUI_PASSWORD
-  #define WEBUI_PASSWORD "solarcontrol"
-#endif
+// ─── Auth ────────────────────────────────────────────────────────────────────
+// Basic-Auth wurde bewusst entfernt:
+//   • viele Browser senden den Authorization-Header beim WebSocket-Upgrade
+//     NICHT mit (auch wenn die Hauptseite ihn hatte) → /ws scheitert mit 401,
+//     UI bleibt leer trotz funktionierendem HTTP-Server.
+//   • Das Gerät läuft im internen Netz hinter dem Router. Schutz erfolgt
+//     auf Netzwerkebene (kein Port-Forwarding!).
+// WEBUI_USERNAME/_PASSWORD aus credentials.h bleiben definiert, werden hier
+// aber nicht mehr ausgewertet.
 
 // ─── Server handle ────────────────────────────────────────────────────────────
 static httpd_handle_t _server = nullptr;
@@ -93,42 +96,6 @@ struct PendingCmd {
 
 static PendingCmd   _pending;
 static portMUX_TYPE _cmd_mux = portMUX_INITIALIZER_UNLOCKED;
-
-// ─── Basic Auth ───────────────────────────────────────────────────────────────
-static const char BASE64[] =
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-
-static bool base64_match(const char* encoded, const char* expected) {
-    char decoded[128] = {0};
-    int  out = 0;
-    uint32_t val  = 0;
-    int      bits = 0;
-    for (int i = 0; encoded[i] && encoded[i] != '=' && out < 127; i++) {
-        const char* p = strchr(BASE64, encoded[i]);
-        if (!p) continue;
-        val = (val << 6) | (p - BASE64);
-        bits += 6;
-        if (bits >= 8) { decoded[out++] = (val >> (bits - 8)) & 0xFF; bits -= 8; }
-    }
-    decoded[out] = '\0';
-    return strcmp(decoded, expected) == 0;
-}
-
-static bool auth_ok(httpd_req_t* req) {
-    char hdr[128];
-    if (httpd_req_get_hdr_value_str(req, "Authorization", hdr, sizeof(hdr)) != ESP_OK)
-        return false;
-    if (strncmp(hdr, "Basic ", 6) != 0) return false;
-    char expected[96];
-    snprintf(expected, sizeof(expected), "%s:%s", WEBUI_USERNAME, WEBUI_PASSWORD);
-    return base64_match(hdr + 6, expected);
-}
-
-static esp_err_t auth_challenge(httpd_req_t* req) {
-    httpd_resp_set_status(req, "401 Unauthorized");
-    httpd_resp_set_hdr(req, "WWW-Authenticate", "Basic realm=\"SolarControl\"");
-    return httpd_resp_sendstr(req, "Unauthorized");
-}
 
 // ─── JSON-String-Escape (für WebSerial-Output-Frames) ────────────────────────
 // Schreibt eine RFC-8259-konforme JSON-String-Repräsentation OHNE umschließende
@@ -234,6 +201,16 @@ static void build_json(char* buf, size_t len, bool include_full) {
         s.currentMode == SolarLogic::Mode::MANUAL_POOL  ? "MANUAL_POOL"  :
                                                           "MANUAL_BOILER";
 
+    // RSSI direkt aus dem ESP-IDF-Stack lesen — esp_wifi_sta_get_ap_info
+    // ist auch dann korrekt, wenn wir den Connect via esp_wifi_set_config()
+    // (nicht über die Arduino-WiFi-Klasse) gemacht haben.
+    int rssi = 0;
+    bool linkUp = (Display::wifiConnected && Display::wifiIP[0] != '-');
+    if (linkUp) {
+        wifi_ap_record_t ap{};
+        if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK) rssi = ap.rssi;
+    }
+
     int n = snprintf(buf, len,
         "{"
         "\"type\":\"status\","
@@ -276,7 +253,7 @@ static void build_json(char* buf, size_t len, bool include_full) {
         Display::isCommissioned ? "true" : "false",
         (unsigned)MatterBridge::fabricCount(),
         Display::wifiIP,
-        WiFi.isConnected() ? WiFi.RSSI() : 0,
+        rssi,
         millis() / 1000UL,
         (unsigned)ESP.getFreeHeap(),
         WebSerial::isActive() ? "true" : "false",
@@ -358,7 +335,6 @@ static void build_matter_json(char* buf, size_t len)
 
 // GET /  →  compressed HTML
 static esp_err_t root_handler(httpd_req_t* req) {
-    if (!auth_ok(req)) return auth_challenge(req);
     httpd_resp_set_type(req, "text/html");
     httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
     httpd_resp_set_hdr(req, "Cache-Control",    "no-cache");
@@ -369,8 +345,6 @@ static esp_err_t root_handler(httpd_req_t* req) {
 
 // GET /api/status  →  JSON (kompakt; ?full=1 hängt sys-Snapshot an)
 static esp_err_t status_handler(httpd_req_t* req) {
-    if (!auth_ok(req)) return auth_challenge(req);
-
     bool full = false;
     char query[32];
     if (httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK) {
@@ -388,7 +362,6 @@ static esp_err_t status_handler(httpd_req_t* req) {
 
 // GET /api/matter  →  Matter-Commissioning-Snapshot
 static esp_err_t matter_handler(httpd_req_t* req) {
-    if (!auth_ok(req)) return auth_challenge(req);
     char buf[400];
     build_matter_json(buf, sizeof(buf));
     httpd_resp_set_type(req, "application/json");
@@ -458,7 +431,6 @@ static esp_err_t settings_save(const WebSettings& s) {
 // gegeben — stattdessen nur ein Boolean "passSet". So lässt sich im UI ein
 // Platzhalter "(unverändert)" anzeigen ohne das Klartext-Passwort zu leaken.
 static esp_err_t settings_get_handler(httpd_req_t* req) {
-    if (!auth_ok(req)) return auth_challenge(req);
     WebSettings s;
     settings_load(s);
     char buf[480];
@@ -477,8 +449,6 @@ static esp_err_t settings_get_handler(httpd_req_t* req) {
 
 // POST /api/settings → akzeptiert JSON-Body { tz, ntp1, ntp2, apFallback }
 static esp_err_t settings_post_handler(httpd_req_t* req) {
-    if (!auth_ok(req)) return auth_challenge(req);
-
     int total = req->content_len;
     if (total <= 0 || total > 1024) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid body size");
@@ -557,7 +527,6 @@ static esp_err_t favicon_handler(httpd_req_t* req) {
 static esp_err_t ws_handler(httpd_req_t* req) {
     // Initial HTTP handshake
     if (req->method == HTTP_GET) {
-        if (!auth_ok(req)) return auth_challenge(req);
         ws_add(httpd_req_to_sockfd(req));
         ESP_LOGI(TAG, "WS client connected fd=%d", httpd_req_to_sockfd(req));
         // Send initial status (mit System-Snapshot, damit das UI direkt alle
@@ -646,8 +615,6 @@ static esp_err_t ws_handler(httpd_req_t* req) {
 // The browser JS sends header X-Firmware-Size with the binary size,
 // so we can stop reading at exactly the right byte count.
 static esp_err_t update_handler(httpd_req_t* req) {
-    if (!auth_ok(req)) return auth_challenge(req);
-
     int total = req->content_len;
     if (total <= 0 || total > 3 * 1024 * 1024) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid size");
@@ -856,7 +823,7 @@ void begin() {
     // Broadcast task – low priority, 4 kB stack
     xTaskCreate(broadcast_task, "webui_bcast", 4096, nullptr, 2, nullptr);
 
-    ESP_LOGI(TAG, "WebUI gestartet auf Port %d (Benutzer: %s)", WEBUI_PORT, WEBUI_USERNAME);
+    ESP_LOGI(TAG, "WebUI gestartet auf Port %d (Auth deaktiviert)", WEBUI_PORT);
 }
 
 void stop() {

@@ -183,28 +183,39 @@ input:checked+.sl:before{transform:translateX(20px)}
   <!-- Settings -->
   <div class="card">
     <h2>Einstellungen</h2>
-    <div class="set">
+    <!-- WICHTIG: <form> + verstecktes Username-Feld, damit Chrome / Edge
+         keine "[DOM] Password field is not contained in a form"-Warnung
+         loggen und der Passwortmanager das Feld korrekt zuordnen kann.
+         action="javascript:void(0)" verhindert klassisches Form-Submit. -->
+    <form class="set" id="setForm" action="javascript:void(0)"
+          onsubmit="saveSettings();return false" autocomplete="on">
+      <input type="text" name="username" id="setUserHidden"
+             value="solar" autocomplete="username"
+             style="display:none" tabindex="-1" aria-hidden="true">
       <label>WLAN SSID
-        <input type="text" id="setSsid" placeholder="MeinWLAN" autocomplete="off">
+        <input type="text" id="setSsid" name="ssid"
+               placeholder="MeinWLAN" autocomplete="off"
+               autocapitalize="off" spellcheck="false">
       </label>
       <label>WLAN Passwort
-        <input type="password" id="setPass" placeholder="(unver&auml;ndert)" autocomplete="new-password">
+        <input type="password" id="setPass" name="password"
+               placeholder="(unver&auml;ndert)" autocomplete="new-password">
       </label>
       <label>Zeitzone (POSIX TZ)
-        <input type="text" id="setTz" placeholder="CET-1CEST,M3.5.0,M10.5.0/3">
+        <input type="text" id="setTz" placeholder="CET-1CEST,M3.5.0,M10.5.0/3" autocomplete="off">
       </label>
       <label>NTP-Server prim&auml;r
-        <input type="text" id="setNtp1" placeholder="pool.ntp.org">
+        <input type="text" id="setNtp1" placeholder="pool.ntp.org" autocomplete="off">
       </label>
       <label>NTP-Server sekund&auml;r
-        <input type="text" id="setNtp2" placeholder="time.cloudflare.com">
+        <input type="text" id="setNtp2" placeholder="time.cloudflare.com" autocomplete="off">
       </label>
       <label class="chk">
         <input type="checkbox" id="setApFb"> WLAN-AP-Fallback aktivieren
       </label>
-      <button class="otabtn" onclick="saveSettings()">Speichern</button>
+      <button type="submit" class="otabtn">Speichern</button>
       <div id="setmsg"></div>
-    </div>
+    </form>
   </div>
 
   <!-- WebSerial (Remote-Wartung) -->
@@ -237,10 +248,16 @@ input:checked+.sl:before{transform:translateX(20px)}
 
 </main>
 
-<!-- Optional: kompakte QR-Code-Library (~4KB).
-     Kein Hard-Requirement: Wenn das CDN blockiert ist, fällt das UI auf
-     Klartext + Manual-Pairing-Code zurück. -->
-<script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js" async onerror="window.qrLoadFail=true"></script>
+<!-- QR-Code-Library (davidshimjs/qrcodejs 1.0.0) vom cdnjs-Host.
+     cdnjs.cloudflare.com ist auf Edge/Brave NICHT auf der Tracking-
+     Blockliste (im Gegensatz zu cdn.jsdelivr.net). Mit SRI-Hash,
+     crossorigin="anonymous" und referrerpolicy="no-referrer" sieht
+     der Browser den Request als reine Library-Auslieferung — kein
+     Tracking-Vehikel. Gleicher Aufbau wie BeltWinder-Matter. -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"
+        integrity="sha512-CNgIRecGo7nphbeZ04Sc13ka07paqdeTu0WR1IM4kNcpmBAUSHSQX0FslNhTDadL4O5SAGapGt4FodqL8My0mA=="
+        crossorigin="anonymous"
+        referrerpolicy="no-referrer"></script>
 
 <script>
 var ws, rt, lastMatterQr = '';
@@ -344,25 +361,35 @@ function applyMatter(d) {
   setText('mpc', d.manualPairingCode || '-');
   setText('qrtxt', d.qrCode || '-');
 
-  // QR-Code rendern (qrcode-generator). Wenn die Library nicht geladen ist
-  // (z.B. Offline-Setup), bleibt nur der Klartext-Payload sichtbar.
+  // QR-Code rendern (qrcodejs vom CDN). Wenn die Library nicht geladen
+  // ist (kein Internet / CSP / Tracking-Prevention), bleibt nur der
+  // Klartext-Payload + Manual-Pairing-Code sichtbar.
   if (d.qrCode && d.qrCode !== lastMatterQr) {
     lastMatterQr = d.qrCode;
     renderQr(d.qrCode);
   }
 }
 
+var qrInstance = null;
 function renderQr(payload) {
   var box = document.getElementById('qrbox');
-  if (typeof qrcode !== 'function' || window.qrLoadFail) {
+  // qrcodejs (davidshimjs) exportiert global "QRCode". Falls die Library
+  // nicht geladen ist (z.B. Tracking-Prevention oder kein Internet),
+  // bleibt nur der Klartext-Payload sichtbar.
+  if (typeof QRCode !== 'function') {
     box.style.display = 'none';
     return;
   }
   try {
-    var qr = qrcode(0, 'M');           // typeNumber=auto, errCorrect M
-    qr.addData(payload);
-    qr.make();
-    box.innerHTML = qr.createImgTag(5, 8);  // cellSize=5, margin=8
+    box.innerHTML = '';
+    qrInstance = new QRCode(box, {
+      text: payload,
+      width: 200,
+      height: 200,
+      colorDark:  '#000000',
+      colorLight: '#ffffff',
+      correctLevel: QRCode.CorrectLevel.M
+    });
     box.style.display = 'block';
   } catch(e) {
     box.style.display = 'none';

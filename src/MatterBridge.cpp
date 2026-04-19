@@ -201,6 +201,29 @@ static void wifiEventHandler(void* /*arg*/, esp_event_base_t base,
     }
 }
 
+// IP_EVENT_STA_GOT_IP ist die verlässliche Quelle für "Netzwerk steht".
+// Der CHIP-native DeviceEventType::kWiFiConnectivityChange feuert in einigen
+// esp-matter-Versionen erst beim Commissioning — bevor ein Gerät commissioned
+// ist oder wenn WiFi-Credentials direkt aus dem NVS kommen (PoolMaster-Pattern)
+// bleibt er still. Daher hier zusätzlich auf den ESP-IDF-Event hören und das
+// s_wifi_up_event-Flag setzen, auf das startWifiServices() in main.cpp wartet.
+static void ipEventHandler(void* /*arg*/, esp_event_base_t base,
+                           int32_t event_id, void* data)
+{
+    if (base != IP_EVENT || event_id != IP_EVENT_STA_GOT_IP) return;
+    auto* ev = static_cast<ip_event_got_ip_t*>(data);
+    Display::wifiConnected = true;
+    snprintf(Display::wifiIP, sizeof(Display::wifiIP),
+             IPSTR, IP2STR(&ev->ip_info.ip));
+    ESP_LOGI(TAG, "=============== WiFi Online ================");
+    ESP_LOGI(TAG, " IP: %s  GW: " IPSTR "  Mask: " IPSTR,
+             Display::wifiIP,
+             IP2STR(&ev->ip_info.gw),
+             IP2STR(&ev->ip_info.netmask));
+    ESP_LOGI(TAG, "============================================");
+    s_wifi_up_event = true;   // wird in loop() konsumiert -> startWifiServices()
+}
+
 static void registerWifiHandlersOnce()
 {
     if (s_wifi_handlers_done) return;
@@ -209,8 +232,9 @@ static void registerWifiHandlersOnce()
             "wifi_rc", pdMS_TO_TICKS(2000), pdFALSE, nullptr, wifiReconnectTimerCb);
     }
     esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, wifiEventHandler, nullptr);
+    esp_event_handler_register(IP_EVENT,   IP_EVENT_STA_GOT_IP, ipEventHandler, nullptr);
     s_wifi_handlers_done = true;
-    ESP_LOGI(TAG, "WiFi: Reconnect-Handler registriert");
+    ESP_LOGI(TAG, "WiFi: Reconnect- + IP-Event-Handler registriert");
 }
 
 static esp_err_t connectWifiInternal()
@@ -415,6 +439,12 @@ bool start()
     } else {
         ESP_LOGI(TAG, "Noch nicht commissioned — wartet auf Pairing");
     }
+
+    // IP-/WiFi-Event-Handler SOFORT nach esp_matter::start() registrieren
+    // (dort wird esp_wifi_init() + esp_netif_init() bereits erledigt).
+    // Muss vor connectWifiInternal() passieren, damit ein eventuell sehr
+    // frühes IP_EVENT_STA_GOT_IP nicht verpasst wird.
+    registerWifiHandlersOnce();
 
     // Direkter WiFi-Login mit den NVS-Credentials.
     // Wenn bereits über Matter-Network-Commissioning Daten provisioniert

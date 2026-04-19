@@ -308,7 +308,7 @@ dependencies:
       type: service
     version: 1.2.0
   espressif/esp_secure_cert_mgr:
-    component_hash: 2587797e68395edb67f30a7f9a7ce6a529492fa5fa6468592e912bc7ea34dbae
+    component_hash: 40a986c1f45d91eb6d339ca51dcab90c4ecce2a6622c268edaaa05887852d464
     dependencies:
     - name: idf
       require: private
@@ -316,7 +316,7 @@ dependencies:
     source:
       registry_url: https://components.espressif.com
       type: service
-    version: 2.9.1
+    version: 2.9.2
   espressif/jsmn:
     component_hash: d80350c41bbaa827c98a25b6072df00884e72f54885996fab4a4f0aebce6b6c3
     dependencies:
@@ -426,6 +426,6 @@ direct_dependencies:
 - espressif/rmaker_common
 - idf
 - joltwallet/littlefs
-manifest_hash: 678e3da4ae8eee40540f9a7dfc6845b8a6773de66fbbeb17293865345e4611d2
+manifest_hash: 28a762cc68d0ac3f49d66d9f0fe378b1699712b19aa67057b90a2b0be01b979a
 target: esp32s3
 version: 2.0.0
