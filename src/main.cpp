@@ -13,6 +13,8 @@
 #include "Display.h"
 #include "WebUI.h"
 #include "WebSerial.h"
+#include "HistoryLog.h"
+#include "PoolHttpBridge.h"
 #include <apps/esp_sntp.h>
 #include <time.h>
 
@@ -24,6 +26,7 @@ static unsigned long lastLevelRead     = 0;
 static unsigned long lastMatterUpdate  = 0;
 static unsigned long lastDisplayUpdate = 0;
 static unsigned long lastCircUpdate    = 0;
+static unsigned long lastPairingUi    = 0;
 
 // WebUI + OTA – einmalig starten wenn WiFi verbunden
 static bool wifiServicesStarted = false;
@@ -139,9 +142,40 @@ static void processCommandLine(const String& line)
         SolarLogic::setMotionPower(true);
         WebSerial::println("OK: Bewegungsmelder EIN");
     }
-    else if (line == "MOTION_OFF") {
-        SolarLogic::setMotionPower(false);
-        WebSerial::println("OK: Bewegungsmelder AUS");
+    else if (line == "CLEAR_POOL_HTTP") {
+        PoolHttpBridge::saveConfig("",
+                                   PoolHttpBridge::TokenSaveMode::Clear,
+                                   nullptr,
+                                   5000);
+        WebSerial::println(
+            "OK: HTTP-Brücke entfernt (pool_http_*). Matter SET_POOL_NODE kann wieder verwendet werden — ggf. Reboot.");
+    }
+    else if (line.startsWith("SET_POOL_HTTP ")) {
+        String rest = line.substring(14);
+        rest.trim();
+        int sp       = rest.indexOf(' ');
+        String urlPx = rest;
+        String tokPx = "";
+        if (sp > 0) {
+            urlPx = rest.substring(0, sp);
+            tokPx = rest.substring(sp + 1);
+            tokPx.trim();
+        }
+        urlPx.trim();
+        if (!urlPx.length()) {
+            WebSerial::println("Format: SET_POOL_HTTP <basis-URL> [bearer]");
+            WebSerial::println("Beispiel: SET_POOL_HTTP http://poolmaster.local");
+            return;
+        }
+        PoolHttpBridge::TokenSaveMode tm = tokPx.length()
+                                               ? PoolHttpBridge::TokenSaveMode::Set
+                                               : PoolHttpBridge::TokenSaveMode::Keep;
+        const char* tptr = tokPx.length() ? tokPx.c_str() : nullptr;
+
+        bool okSave = PoolHttpBridge::saveConfig(urlPx.c_str(), tm,
+                                                  tptr, 5000);
+        WebSerial::println(okSave ? "OK: pool_http_base gespeichert (HTTP-Poll aktiv, Matter-Subscribe übersprungen)"
+                                  : "FEHLER: NVS-Schreibfehler Pool-HTTP");
     }
     else if (line == "REBOOT") {
         WebSerial::println("Reboot in 500 ms...");
@@ -149,7 +183,8 @@ static void processCommandLine(const String& line)
         esp_restart();
     }
     else if (line == "HELP" || line == "?") {
-        WebSerial::println("Kommandos: SET_POOL_NODE | GET_POOL_NODE | GET_STATE | "
+        WebSerial::println("Kommandos: SET_POOL_NODE | GET_POOL_NODE | "
+                           "SET_POOL_HTTP | CLEAR_POOL_HTTP | GET_STATE | "
                            "GET_QR | OPEN_COMMISSIONING | FACTORY_RESET | "
                            "WIFI_STATUS | WIFI_RECONNECT | "
                            "MOTION_ON | MOTION_OFF | REBOOT | HELP");
@@ -197,6 +232,7 @@ void setup()
 
     // Hardware
     SolarLogic::init();
+    HistoryLog_init();
     CirculationLogic::init();
 
     // Display (vor Matter damit Boot-Screen erscheint)
@@ -252,6 +288,11 @@ static void startWifiServices()
     esp_sntp_init();
     ESP_LOGI("main", "SNTP gestartet (TZ=%s NTP1=%s NTP2=%s)", tz, ntp1, ntp2);
 
+    PoolHttpBridge::loadFromNvs();
+    ESP_LOGI("main",
+             "Pool-HTTP-Brücke: %s",
+             PoolHttpBridge::isConfigured() ? "aktiv (URL aus NVS oder Vorgabe)" : "aus");
+
     // WebUI (HTTP-Server Port 80, WebSocket /ws, OTA /update)
     WebUI::begin();
 
@@ -301,9 +342,13 @@ void loop()
         SolarLogic::readLevelSensor();
     }
 
-    // Matter Attribut-Updates (alle 10s)
-    if (now - lastMatterUpdate >= MATTER_UPDATE_INTERVAL_MS) {
-        lastMatterUpdate = now;
+    // Matter Attribut-Updates (10s normal, 30s solange nicht commissioned)
+    {
+        const uint32_t matterPeriod = Display::isCommissioned
+            ? MATTER_UPDATE_INTERVAL_MS
+            : MATTER_UPDATE_INTERVAL_COMMISSIONING_MS;
+        if (now - lastMatterUpdate >= matterPeriod) {
+            lastMatterUpdate = now;
 
         // EP1: Betriebsmodus (spiegelt den aktuellen SolarLogic-Modus wider)
         MatterDevices::updateControlMode(
@@ -312,10 +357,9 @@ void loop()
         // EP2: Pumpenstatus (read-only aus Matter-Sicht)
         MatterDevices::updatePumpState(SolarLogic::state.pumpRunning);
 
-        // EP3: Ventil-Rückmeldung – Hardware-Pin, entkoppelt von EP1
-        // valvePool=true → POOL(1), valvePool=false → BOILER(0)
+        // EP3: Endschalter-Pin wie Mega main.ino (SolarControl/VALVE_STATUS → Pool/Puffer).
         MatterDevices::updateValveFeedback(
-            SolarLogic::state.valvePool
+            SolarLogic::valveEndswitchIndicatesPool()
                 ? MatterDevices::VALVE_POOL
                 : MatterDevices::VALVE_BOILER);
 
@@ -326,16 +370,23 @@ void loop()
         // EP5: Boiler Temperatur
         MatterDevices::updateTemperature(MatterDevices::epBoilerTemp,
                                           SolarLogic::state.boilerTemp);
+        }
     }
 
-    // Display Update (100ms)
+    // Display Update (100ms im Betrieb; beim Pairing seltener — weniger I2C-Last,
+    // loopTask gibt IDLE1 öfter frei; spart RAM-Fragmentierung während AddNOC).
     if (now - lastDisplayUpdate >= 100UL) {
         lastDisplayUpdate = now;
         if (!Display::isCommissioned) {
-            char qr[96] = {0}, manual[32] = {0};
-            MatterBridge::getQRCode(qr, sizeof(qr));
-            MatterBridge::getManualPairingCode(manual, sizeof(manual));
-            Display::showCommissioningScreen(qr, manual);
+            const bool pairingDue =
+                (lastPairingUi == 0) || (now - lastPairingUi >= 1000UL);
+            if (pairingDue) {
+                lastPairingUi = now;
+                char qr[96] = {0}, manual[32] = {0};
+                MatterBridge::getQRCode(qr, sizeof(qr));
+                MatterBridge::getManualPairingCode(manual, sizeof(manual));
+                Display::showCommissioningScreen(qr, manual);
+            }
         } else {
             Display::update(5000);
         }
@@ -350,6 +401,7 @@ void loop()
     // Button & Bewegungsmelder (jeden Loop)
     SolarLogic::handleButton();
     SolarLogic::handleMotion();
+    SolarLogic::pollValveEnds();
 
     // Serial-Kommandos
     handleSerialCommands();
@@ -357,6 +409,17 @@ void loop()
     // WebUI-Kommandos verarbeiten (Relay/Modus von WebSocket)
     WebUI::processCommands();
 
+    HistoryLog_maybeSample();
+
     // ArduinoOTA (espota Protokoll via PlatformIO)
     if (wifiServicesStarted) ArduinoOTA.handle();
+
+    if (wifiServicesStarted) {
+        PoolHttpBridge::poll();
+    }
+
+    // loopTask ist nicht im ESP Task-WDT registriert — esp_task_wdt_reset() war nur
+    // Fehler-Spam ("task not found"). Kurzes Yield verhindert IDLE1-Starvation
+    // (Task-WDT) während I2C/Display/SPIFFS und lässt Matter/BLE Zeitscheiben.
+    delay(1);
 }

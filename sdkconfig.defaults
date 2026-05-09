@@ -30,6 +30,10 @@ CONFIG_SPIRAM_FETCH_INSTRUCTIONS=y
 CONFIG_SPIRAM_RODATA=y
 # Route WiFi/LwIP dynamic buffers to PSRAM (saves ~30–40KB internal RAM)
 CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
+# Mehr Allokationen nach PSRAM; große Reserve im internen DRAM für WiFi-DMA/mgmt
+# (sonst Log: wifi:m f null = Management-Puffer-Allokation fehlgeschlagen).
+CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=4096
+CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL=81920
 
 # ── ESP32-S3 Instruction Cache / IRAM balance ──────────────────────────────────
 # S3 Bank 0 = 48KB split between I-Cache and IRAM:
@@ -84,6 +88,11 @@ CONFIG_ENABLE_CHIPOBLE=y
 # BLE-Controller auf Core 0 pinnen (WiFi läuft auf Core 1, siehe oben)
 CONFIG_BT_CTRL_PINNED_TO_CORE_0=y
 
+# NimBLE-Host-Task (Matter CHIPoBLE / bleprph_host_task → nimble_port_run):
+# Default 4096 ist für Commissioning + WiFi-Coexist oft knapp; sporadisch
+# LoadProhibited in nimble_port_run (EXCVADDR nahe 0x00..) durch Stack-Corruption.
+CONFIG_BT_NIMBLE_HOST_TASK_STACK_SIZE=8192
+
 # ── OpenThread — disabled (Wi-Fi only, no Thread border router) ────────────────
 CONFIG_OPENTHREAD_ENABLED=n
 CONFIG_OPENTHREAD_RADIO_NATIVE=n
@@ -96,10 +105,9 @@ CONFIG_ESP32_WIFI_NAN_ENABLE=n
 # Disable AMPDU RX – removes the WIFI_RX_BA_WIN >= 2*STATIC_RX_BUFFER_NUM constraint
 # and allows reducing static RX buffers without a build error.
 CONFIG_ESP32_WIFI_AMPDU_RX_ENABLED=n
-# Static RX buffers live in internal DMA RAM even with SPIRAM_TRY_ALLOCATE_WIFI_LWIP.
-# Cutting from the PSRAM-boosted default of 16 to 4 saves 12×1600 B = 19.2 KB of
-# internal RAM, which is the headroom the BLE controller malloc_internal_wrapper needs.
-CONFIG_ESP32_WIFI_STATIC_RX_BUFFER_NUM=4
+# Statische RX-Puffer nur im internen DMA-RAM. 4 war zu knapp unter BLE+Matter
+# (wifi:m f null). 8 ≈ +6,4 KB intern, deutlich stabileres STA während Commissioning.
+CONFIG_ESP32_WIFI_STATIC_RX_BUFFER_NUM=8
 
 
 # ── Matter / CHIP stack ────────────────────────────────────────────────────────
@@ -142,6 +150,8 @@ CONFIG_ESP_COREDUMP_CHECKSUM_CRC32=y
 # ── Stack / heap tuning ────────────────────────────────────────────────────────
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
 CONFIG_CHIP_TASK_STACK_SIZE=16384
+# loopTask + Display/I2C kann IDLE1 sonst >5s verhungern lassen (siehe Serial-Log).
+CONFIG_ESP_TASK_WDT_TIMEOUT_S=10
 
 # FreeRTOS stack-overflow canary
 CONFIG_FREERTOS_CHECK_STACKOVERFLOW_CANARY=y
@@ -152,6 +162,9 @@ CONFIG_LOG_DEFAULT_LEVEL_INFO=y
 CONFIG_LOG_DEFAULT_LEVEL=3
 
 # ── mbedTLS / heap ────────────────────────────────────────────────────────────
+# Ohne EXTERNAL: bei Paarung AddNOC/NOC-Verify — Log: "BIGNUM - Memory allocation failed"
+# (interner DRAM zu knapp trotz PSRAM). Allocator nutzt dann auch große Blöcke aus PSRAM.
+CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y
 CONFIG_MBEDTLS_DYNAMIC_BUFFER=y
 CONFIG_MBEDTLS_DYNAMIC_FREE_PEER_CERT=y
 CONFIG_MBEDTLS_DYNAMIC_FREE_CONFIG_DATA=y

@@ -71,6 +71,14 @@
 constexpr uint8_t DS18B20_IDX_STORAGE  = 0;  // Pufferspeicher oben
 constexpr uint8_t DS18B20_IDX_BACKFLOW = 1;  // Rücklauf Solar
 
+// Schalter für DS18B20-Bus: 0 = komplett deaktiviert (kein Polling, keine
+// Warn-Logs), 1 = aktiv. Im Original-Sketch (Mega 2560) sind keine DS18B20
+// implementiert — Sensor-Erweiterung auf 1 setzen, sobald sie verdrahtet sind
+// (4,7 kΩ Pull-up auf 3,3 V nicht vergessen).
+#ifndef DS18B20_ENABLED
+  #define DS18B20_ENABLED 0
+#endif
+
 // ────────────────────────────────────────────────────────────
 // I2C BUS – OLED Display (optional)
 // ────────────────────────────────────────────────────────────
@@ -115,6 +123,38 @@ constexpr uint8_t DS18B20_IDX_BACKFLOW = 1;  // Rücklauf Solar
   #define PIN_MOTION_POWER        21   // HC-SR501 Stromversorgung (via N-MOSFET/NPN)
 #endif
 
+// Bewegungsmelder (ActionPIR aus Arduino main.ino):
+// Original: Bewegung bei digitalRead(PIR_PIN)==HIGH → Display an, Timer neu.
+// Bei invertiertem Ausgang (LOW = Bewegung): MOTION_ACTIVE_HIGH auf 0 setzen.
+#ifndef MOTION_ACTIVE_HIGH
+  #define MOTION_ACTIVE_HIGH 1
+#endif
+// Anzeigezeit nach letzter erkannter Bewegung [ms] — entspricht PIR_TimerON (60 s).
+#ifndef MOTION_DISPLAY_ON_MS
+  #define MOTION_DISPLAY_ON_MS 60000u
+#endif
+// 1 = Beleuchtungsrelais wie im Original mit PIR; 0 = nur OLED per PIR, Licht nur manuell.
+#ifndef MOTION_CONTROLS_ILLUMINATION
+  #define MOTION_CONTROLS_ILLUMINATION 1
+#endif
+// PIR-Versorgung über GPIO (z. B. MOSFET): 1 = „Power an“ bei HIGH, 0 = bei LOW.
+#ifndef MOTION_POWER_ACTIVE_HIGH
+  #define MOTION_POWER_ACTIVE_HIGH 1
+#endif
+// Arduino Mega Sketch (GitHub SolarControl/main.ino): pinMode(PIR_PIN, INPUT) — ohne Pull-up.
+// 1 = zusätzlich interner Pull-up (ESP32); nur bei Hardware-Problemen aktivieren.
+#ifndef MOTION_GPIO_PULLUP
+  #define MOTION_GPIO_PULLUP 0
+#endif
+// Ventilendschalter: 1 = LOW am Pin bedeutet Stellung POOL (wie Mega VALVE_STATUS_PIN + Display).
+#ifndef VALVE_ENDSWITCH_LOW_MEANS_POOL
+  #define VALVE_ENDSWITCH_LOW_MEANS_POOL 1
+#endif
+// Mega vergleicht Endschalter sofort mit Relais (keine Sperrzeit). >0 optional [ms] nach Ventilumschaltung.
+#ifndef VALVE_FEEDBACK_IGNORE_AFTER_SWITCH_MS
+  #define VALVE_FEEDBACK_IGNORE_AFTER_SWITCH_MS 0u
+#endif
+
 // ────────────────────────────────────────────────────────────
 // ANALOGER EINGANG – PEGELSONDE
 // ADC1_CH1 → WiFi/Matter-sicher!
@@ -151,6 +191,25 @@ constexpr float PT1000_REF_R            = 4300.0f; // Referenzwiderstand [Ω]
 // → Standard MAX31865-Breakout mit 4K3 Ref-R für PT1000
 // → Bei abweichendem Breakout-Board hier anpassen!
 
+// MAX31865 Verdrahtungsmodus (passend zur Lötbrücke auf dem Breakout-Board).
+// Original-Sketch (Robothaler/SolarControl, Mega 2560) verwendet 2WIRE.
+// Mögliche Werte: MAX31865_2WIRE | MAX31865_3WIRE | MAX31865_4WIRE
+#ifndef MAX31865_WIRE_MODE
+  #define MAX31865_WIRE_MODE MAX31865_2WIRE
+#endif
+
+// MAX31865-Bus-Modus.
+//   1 = Software-SPI (Bit-Banging) – exakt wie Original-Sketch (Mega 2560);
+//       robust, max. ~100 kHz aber praktisch immun gegen Bus-/Strapping-
+//       Probleme der ESP32-S3 Hardware-SPI-Pins.
+//   0 = Hardware-SPI2 (HSPI) – schneller, benötigt zwingend funktionierende
+//       SCK/MOSI/MISO-Verdrahtung an den fixen Pins aus Config.h.
+// Default: 1 (Software-SPI), da das die Original-Topologie ist und beim
+// Übergang Mega → ESP32-S3 die häufigste Fehlerquelle (Wiring) eliminiert.
+#ifndef MAX31865_USE_SOFT_SPI
+  #define MAX31865_USE_SOFT_SPI 1
+#endif
+
 // ────────────────────────────────────────────────────────────
 // STEUERPARAMETER – DIFFERENZTEMPERATUR-REGELUNG
 // ────────────────────────────────────────────────────────────
@@ -172,6 +231,8 @@ constexpr float    LEVEL_WARN_PCT       = 20.0f;  // Warnschwelle [%]
 // ────────────────────────────────────────────────────────────
 constexpr uint32_t TEMP_READ_INTERVAL_MS      =  5000; // Temp-Messzyklus          [ms]
 constexpr uint32_t MATTER_UPDATE_INTERVAL_MS  = 10000; // Matter Attribut-Update   [ms]
+/** Vor Fabric: seltener publizieren → weniger IM/WiFi-Last (wifi:m f null). */
+constexpr uint32_t MATTER_UPDATE_INTERVAL_COMMISSIONING_MS = 30000;
 constexpr uint32_t BUTTON_DEBOUNCE_MS         =   200; // Taster Entprellung       [ms]
 constexpr uint32_t VALVE_SWITCH_DELAY_MS      =  2000; // Pause nach Ventilschalten[ms]
 constexpr uint32_t DS18B20_CONVERSION_MS      =   750; // DS18B20 Konvertierungszeit[ms]
@@ -283,6 +344,7 @@ constexpr char NVS_KEY_POOL_EP_MODE[]   = "pool_ep_mode";  // uint16_t
 constexpr char NVS_KEY_SOLAR_MODE[]     = "solar_mode";    // uint8_t (SolarMode enum)
 constexpr char NVS_KEY_TEMP_DIFF_ON[]   = "tdiff_on";      // float
 constexpr char NVS_KEY_TEMP_DIFF_OFF[]  = "tdiff_off";     // float
+constexpr char NVS_KEY_LEVEL_WARN_PCT[] = "lvl_warn";      // float (Pegel-Warnschwelle %)
 
 // WebUI-Settings (per HTTP/POST änderbar)
 constexpr char NVS_KEY_TZ[]             = "tz";            // string (POSIX TZ)
@@ -296,4 +358,16 @@ constexpr char NVS_KEY_AP_FALLBACK[]    = "ap_fallback";   // uint8_t (0/1)
 // esp_wifi_set_config() + esp_wifi_connect() — siehe MatterBridge::start().
 constexpr char NVS_KEY_WIFI_SSID[]      = "wifi_ssid";     // string (max 32)
 constexpr char NVS_KEY_WIFI_PASS[]      = "wifi_pass";     // string (max 64)
+
+// HTTP-Brücke Solar ↔ PoolMaster (WLAN, kein MQTT) — Replikat der Matter-
+// Subscription-Daten aus MatterDevices::PoolMasterSubscriptionCallback.
+constexpr char NVS_KEY_POOL_HTTP_BASE[] = "pool_http_base"; // z. B. http://pool.local:8080
+constexpr char NVS_KEY_POOL_HTTP_TOK[]  = "pool_http_tok";  // optional Bearer-Token (max ~64)
+constexpr char NVS_KEY_POOL_HTTP_IV[]    = "pool_http_iv";  // uint32 Poll-Intervall [ms], default 5000
+
+/** Basis-URL ohne abschließenden „/“. Wenn NVS pool_http_base leer ist, nutzt PoolHttpBridge diese
+ *  URL; Matter subscribe zum Pool wird übersprungen. In credentials.h auf "" setzen für rein Matter. */
+#ifndef POOL_HTTP_BASE_DEFAULT
+#define POOL_HTTP_BASE_DEFAULT "http://192.168.178.156"
+#endif
 

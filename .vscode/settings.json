@@ -1,0 +1,6 @@
+{
+    "clangd.arguments": [
+        "--compile-commands-dir=/home/robothaler/SolarControl/.cache/clangd",
+        "--query-driver=/home/robothaler/.platformio/packages/toolchain-*/bin/*,/home/robothaler/.platformio/packages/tool-*/bin/*"
+    ]
+}

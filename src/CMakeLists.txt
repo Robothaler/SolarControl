@@ -11,6 +11,8 @@ idf_component_register(
         "CirculationLogic.cpp"
         "WebUI.cpp"
         "WebSerial.cpp"
+        "HistoryLog.cpp"
+        "PoolHttpBridge.cpp"
     INCLUDE_DIRS
         "."
         "../include"

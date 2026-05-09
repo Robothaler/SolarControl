@@ -342,3 +342,12 @@ _pre_generate_certs(
     ["https_server.crt", "mqtt_server.crt"],
     _build_dir, project_dir,
 )
+
+# ── 5. esp_matter: Parallel-Build / AR-Race (fehlende .o beim lib…a) ────────
+# Unter hoher Parallelität kann Ninja gelegentlich versuchen, libespressif__esp_matter.a
+# zu aktualisieren, bevor alle .o-Dateien geschrieben sind ("No such file").
+# CMAKE_BUILD_PARALLEL_LEVEL drosselt die Ninja-Job-Anzahl für Matter-Umgebungen.
+_pioenv = env.get("PIOENV", "")
+if _pioenv in ("matter_serial", "matter_ota"):
+    os.environ.setdefault("CMAKE_BUILD_PARALLEL_LEVEL", "3")
+    print(f"[Hook] CMAKE_BUILD_PARALLEL_LEVEL={os.environ['CMAKE_BUILD_PARALLEL_LEVEL']} ({_pioenv})")

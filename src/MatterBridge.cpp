@@ -39,6 +39,8 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/timers.h>
 
+#include <cstring>
+
 // CHIP / Matter-Stack-Header
 #include <app/server/Server.h>
 #include <app/server/OnboardingCodesUtil.h>
@@ -137,8 +139,30 @@ static void deviceEventCallback(
 // =============================================================================
 //  PoolMaster-Subscription nach Commissioning automatisch wiederherstellen
 // =============================================================================
+/** Wenn gesetzt (NVS pool_http_base), läuft die Pool-Anbindung per HTTP —
+ *  keine Matter-case-Session zur Pool-ID nötig. */
+static bool poolHttpConfiguredInNvs()
+{
+    char   base[141] = {0};
+    size_t l         = sizeof(base);
+    nvs_handle_t nvs;
+    if (nvs_open(NVS_NAMESPACE, NVS_READONLY, &nvs) == ESP_OK) {
+        esp_err_t e = nvs_get_str(nvs, NVS_KEY_POOL_HTTP_BASE, base, &l);
+        nvs_close(nvs);
+        if (e == ESP_OK && base[0] != '\0')
+            return true;
+    }
+    const char* def = POOL_HTTP_BASE_DEFAULT;
+    return (def != nullptr && def[0] != '\0');
+}
+
 static void restorePoolMasterSubscription()
 {
+    if (poolHttpConfiguredInNvs()) {
+        ESP_LOGI(TAG, "pool_http_base gesetzt → Pool per HTTP — überspringe Matter-Subscribe.");
+        return;
+    }
+
     nvs_handle_t nvs;
     uint64_t nodeId = 0;
     uint16_t epTemp = 0xFFFF, epSoll = 0xFFFF, epMode = 0xFFFF;

@@ -84,6 +84,14 @@ input:checked+.sl:before{transform:translateX(20px)}
 .tbar button{padding:6px 12px;background:#111114;border:1px solid var(--border);color:var(--text);border-radius:6px;cursor:pointer;font-size:.8rem}
 .tbar button:hover{border-color:var(--accent)}
 .tbar button.act{background:var(--green);color:#000;border-color:var(--green);font-weight:600}
+.subnav{display:flex;gap:8px;padding:10px 20px;background:var(--card);border-bottom:1px solid var(--border);flex-wrap:wrap}
+.navt{padding:8px 16px;border-radius:8px;border:1px solid var(--border);background:#111114;cursor:pointer;color:var(--text);font-size:.85rem}
+.navt:hover{border-color:var(--accent)}
+.navt.act{background:var(--accent);color:#000;border-color:var(--accent);font-weight:700}
+.view{display:none}
+.view.act{display:contents}
+.chart-wrap{position:relative;height:220px;margin-top:10px}
+.chart-wrap.tall{height:160px}
 </style>
 </head>
 <body>
@@ -92,7 +100,13 @@ input:checked+.sl:before{transform:translateX(20px)}
   <span id="ip">-</span>
   <span id="dot"></span>
 </header>
+<nav class="subnav">
+  <button type="button" class="navt act" id="navOv" onclick="showView('ov')">&Uuml;bersicht</button>
+  <button type="button" class="navt" id="navVl" onclick="showView('vl')">Verlauf</button>
+</nav>
 <main>
+
+<div id="view-ov" class="view act">
 
   <!-- Solar-Temperaturen -->
   <div class="card">
@@ -213,6 +227,36 @@ input:checked+.sl:before{transform:translateX(20px)}
       <label class="chk">
         <input type="checkbox" id="setApFb"> WLAN-AP-Fallback aktivieren
       </label>
+      <hr style="border:none;border-top:1px solid var(--border);margin:12px 0">
+      <div style="font-size:.68rem;text-transform:uppercase;letter-spacing:.1em;color:var(--dim);margin-bottom:8px">Solar-Regelung</div>
+      <label>&Delta;T Pumpe EIN (K)
+        <input type="number" id="setTdOn" step="0.5" min="0.5" max="50" style="max-width:120px">
+      </label>
+      <label>&Delta;T Pumpe AUS (K)
+        <input type="number" id="setTdOff" step="0.5" min="0" max="50" style="max-width:120px">
+      </label>
+      <label>Pegel-Warnschwelle (%)
+        <input type="number" id="setLvlWarn" step="1" min="0" max="99" style="max-width:120px">
+      </label>
+      <hr style="border:none;border-top:1px solid var(--border);margin:12px 0">
+      <div style="font-size:.68rem;text-transform:uppercase;letter-spacing:.1em;color:var(--dim);margin-bottom:8px">Pool &ndash; Solar (WLAN / HTTP)</div>
+      <p style="font-size:.74rem;color:var(--dim);margin:0 0 10px;line-height:1.35">
+        Interim ohne Matter: SolarControl holt Daten wie beim Matter-<code style="font-size:.7rem">subscribe</code> vom Pool-Rechner
+        unter <strong>/api/pool-solar/v1/read</strong> (siehe Doku auf dem Solar-Gerät). Kein MQTT, kein ESP-NOW.
+      </p>
+      <label>Basis-URL (ohne &ldquo;/&rdquo; am Ende)
+        <input type="text" id="poolHttpBase" placeholder="http://192.168.178.156" maxlength="138" autocomplete="off" spellcheck="false">
+      </label>
+      <label>Bearer (optional)
+        <input type="password" id="poolHttpTok" placeholder="unchanged wenn leer" maxlength="76" autocomplete="off">
+      </label>
+      <label>Poll-Intervall (ms)
+        <input type="number" id="poolHttpMs" min="1000" max="600000" step="500" style="max-width:130px">
+      </label>
+      <label class="chk">
+        <input type="checkbox" id="poolHttpClearTok"> Bearer-Token l&ouml;schen (Pool bleibt erreichbar)
+      </label>
+      <p style="font-size:.7rem;color:var(--dim);margin:0">Letzter Abruf erfolgreich: <span id="poolHttpSts">&mdash;</span></p>
       <button type="submit" class="otabtn">Speichern</button>
       <div id="setmsg"></div>
     </form>
@@ -246,6 +290,31 @@ input:checked+.sl:before{transform:translateX(20px)}
     <div class="pbg" id="pbg"><div class="pf" id="pf"></div></div>
   </div>
 
+</div>
+
+<div id="view-vl" class="view">
+  <div class="card wide">
+    <h2>Verlauf</h2>
+    <p style="font-size:.8rem;color:var(--dim);margin-bottom:8px">
+      Kurz: RAM (~2&nbsp;h, 30&nbsp;s). Lang: SPIFFS (Delta-Log, Rotation wie PoolMaster) nach SNTP-Zeit (UTC).
+    </p>
+    <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:10px">
+      <label for="histRange">Zeitraum</label>
+      <select id="histRange" onchange="loadHistory()">
+        <option value="ram">Letzte ~2&nbsp;h (RAM)</option>
+        <option value="86400">24&nbsp;Stunden (Flash)</option>
+        <option value="604800">7&nbsp;Tage (Flash)</option>
+        <option value="2592000">30&nbsp;Tage (Flash)</option>
+      </select>
+      <button type="button" class="otabtn" onclick="loadHistory()">Aktualisieren</button>
+    </div>
+    <h3 style="font-size:1rem;margin:12px 0 6px">Temperaturen</h3>
+    <div class="chart-wrap"><canvas id="chTemps"></canvas></div>
+    <h3 style="font-size:1rem;margin:18px 0 6px">Aktoren (0/1)</h3>
+    <div class="chart-wrap tall"><canvas id="chAct"></canvas></div>
+  </div>
+</div>
+
 </main>
 
 <!-- QR-Code-Library (davidshimjs/qrcodejs 1.0.0) vom cdnjs-Host.
@@ -258,9 +327,20 @@ input:checked+.sl:before{transform:translateX(20px)}
         integrity="sha512-CNgIRecGo7nphbeZ04Sc13ka07paqdeTu0WR1IM4kNcpmBAUSHSQX0FslNhTDadL4O5SAGapGt4FodqL8My0mA=="
         crossorigin="anonymous"
         referrerpolicy="no-referrer"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"
+        crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 
 <script>
 var ws, rt, lastMatterQr = '';
+var chartTemps = null, chartAct = null;
+
+function showView(which) {
+  document.getElementById('view-ov').classList.toggle('act', which === 'ov');
+  document.getElementById('view-vl').classList.toggle('act', which === 'vl');
+  document.getElementById('navOv').classList.toggle('act', which === 'ov');
+  document.getElementById('navVl').classList.toggle('act', which === 'vl');
+  if (which === 'vl') loadHistory();
+}
 
 function connect() {
   ws = new WebSocket('ws://' + location.host + '/ws');
@@ -271,6 +351,7 @@ function connect() {
       var d = JSON.parse(e.data);
       if      (d.type === 'matter')    applyMatter(d);
       else if (d.type === 'webserial') applyWebSerial(d);
+      else if (d.type === 'history')  redrawCharts(d);
       else                             applyStatus(d);
     } catch(x) {}
   };
@@ -460,6 +541,20 @@ function loadSettings() {
     document.getElementById('setNtp2').value = s.ntp2 || '';
     document.getElementById('setApFb').checked = !!s.apFallback;
     document.getElementById('setSsid').value = s.ssid || '';
+    if (document.getElementById('setTdOn')) document.getElementById('setTdOn').value = s.tempDiffOn != null ? s.tempDiffOn : 8;
+    if (document.getElementById('setTdOff')) document.getElementById('setTdOff').value = s.tempDiffOff != null ? s.tempDiffOff : 2;
+    if (document.getElementById('setLvlWarn')) document.getElementById('setLvlWarn').value = s.levelWarnPct != null ? s.levelWarnPct : 20;
+    if (document.getElementById('poolHttpBase')) {
+      document.getElementById('poolHttpBase').value = s.poolHttpBase || '';
+      document.getElementById('poolHttpMs').value   = (s.poolHttpMs != null && s.poolHttpMs >= 1000) ? s.poolHttpMs : 5000;
+      document.getElementById('poolHttpTok').value  = '';
+      document.getElementById('poolHttpTok').placeholder = s.poolHttpTokSet
+        ? '(token aktiv \u2014 Haken \u00abBearer l\u00f6schen\u00bb oder neues Token)' : '(optional)';
+      document.getElementById('poolHttpClear').checked    = false;
+      if (document.getElementById('poolHttpClearTok')) document.getElementById('poolHttpClearTok').checked = false;
+      document.getElementById('poolHttpSts').textContent =
+        (s.poolHttpLastOk === true) ? '\u2713 Ja' : (s.poolHttpLastOk === false) ? '\u2717 Nein' : '\u2014';
+    }
     var passInp = document.getElementById('setPass');
     passInp.value = '';
     passInp.placeholder = s.passSet ? '(unver\u00E4ndert \u2014 leer lassen zum Beibehalten)' : '(noch nicht gesetzt)';
@@ -473,7 +568,10 @@ function saveSettings() {
     tz:   document.getElementById('setTz').value.trim(),
     ntp1: document.getElementById('setNtp1').value.trim(),
     ntp2: document.getElementById('setNtp2').value.trim(),
-    apFallback: document.getElementById('setApFb').checked
+    apFallback: document.getElementById('setApFb').checked,
+    tempDiffOn:   parseFloat(document.getElementById('setTdOn').value),
+    tempDiffOff:  parseFloat(document.getElementById('setTdOff').value),
+    levelWarnPct: parseFloat(document.getElementById('setLvlWarn').value)
   };
   // WiFi-Felder nur senden wenn der Nutzer sie tats\u00E4chlich angefasst hat.
   // Leeres Pass-Feld bedeutet "unver\u00E4ndert"; wenn er gezielt l\u00F6schen
@@ -483,6 +581,21 @@ function saveSettings() {
   if (ssid) body.ssid = ssid;
   if (pass) body.pass = pass;
   if (ssid && !pass) body.clearPass = false; // keep alten Pass
+
+  if (document.getElementById('poolHttpClear').checked) {
+    body.poolHttpClear = true;
+  } else if (document.getElementById('poolHttpBase')) {
+    var pBase = document.getElementById('poolHttpBase').value.trim();
+    var pMs   = parseInt(document.getElementById('poolHttpMs').value, 10);
+    if (!isNaN(pMs)) body.poolHttpMs = pMs;
+    if (pBase.length) {
+      body.poolHttpBase = pBase;
+      if (document.getElementById('poolHttpClearTok').checked)
+        body.poolHttpTok = '';
+      else if (document.getElementById('poolHttpTok').value.length)
+        body.poolHttpTok = document.getElementById('poolHttpTok').value;
+    }
+  }
 
   var msg = document.getElementById('setmsg');
   msg.textContent = 'Speichere...';
@@ -551,6 +664,91 @@ function prog(p, msg) {
   var bg = document.getElementById('pbg');
   bg.style.display = 'block';
   document.getElementById('pf').style.width = p + '%';
+}
+
+function loadHistory() {
+  var sel = document.getElementById('histRange');
+  var v = sel ? sel.value : 'ram';
+  var url = '/api/history';
+  if (v !== 'ram') {
+    var span = parseInt(v, 10);
+    if (!isNaN(span) && span > 0) {
+      var to = Math.floor(Date.now() / 1000);
+      var from = to - span;
+      url = '/api/history?from=' + from + '&to=' + to + '&pts=600';
+    }
+  }
+  fetch(url).then(function(r){ return r.json(); }).then(redrawCharts).catch(function(){});
+}
+
+function redrawCharts(d) {
+  if (!d || d.type !== 'history' || !d.data || typeof Chart === 'undefined') return;
+  var rows = d.data;
+  if (!rows.length) {
+    if (chartTemps) { chartTemps.destroy(); chartTemps = null; }
+    if (chartAct) { chartAct.destroy(); chartAct = null; }
+    return;
+  }
+  var iv = (d.intervalSec || 30) / 60;
+  var useWall = rows.length && rows[0][0] > 1700000000;
+  var t0 = useWall ? rows[0][0] : 0;
+  var xs = rows.map(function(r, i) {
+    return useWall ? (r[0] - t0) / 60 : i * iv;
+  });
+  var xLabel = useWall
+    ? ('Minuten seit erstem Punkt' + (d.source === 'spiffs' ? ' (Flash, variabler Abstand)' : ' (UTC)'))
+    : ('Minuten (je ' + (d.intervalSec || 30) + ' s)');
+
+  if (chartTemps) chartTemps.destroy();
+  if (chartAct) chartAct.destroy();
+
+  var ctxT = document.getElementById('chTemps');
+  var ctxA = document.getElementById('chAct');
+  if (!ctxT || !ctxA) return;
+
+  chartTemps = new Chart(ctxT, {
+    type: 'line',
+    data: {
+      labels: xs,
+      datasets: [
+        { label: 'Dach',    data: rows.map(function(r){ return r[1]; }), borderColor: '#f59e0b', tension: 0.15, pointRadius: 0 },
+        { label: 'Boiler',  data: rows.map(function(r){ return r[2]; }), borderColor: '#ef4444', tension: 0.15, pointRadius: 0 },
+        { label: 'Puffer',  data: rows.map(function(r){ return r[3]; }), borderColor: '#22c55e', tension: 0.15, pointRadius: 0 },
+        { label: 'R\u00FCckl.', data: rows.map(function(r){ return r[4]; }), borderColor: '#a855f7', tension: 0.15, pointRadius: 0 },
+        { label: 'Pool',    data: rows.map(function(r){ return r[5]; }), borderColor: '#60a5fa', tension: 0.15, pointRadius: 0 },
+        { label: 'Pool Soll', data: rows.map(function(r){ return r[6]; }), borderColor: '#94a3b8', borderDash: [4,4], tension: 0.15, pointRadius: 0 }
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      scales: {
+        x: { title: { display: true, text: xLabel }, ticks: { maxTicksLimit: 10 } },
+        y: { title: { display: true, text: '\u00B0C' } }
+      },
+      plugins: { legend: { labels: { color: '#a1a1aa' } } }
+    }
+  });
+
+  chartAct = new Chart(ctxA, {
+    type: 'line',
+    data: {
+      labels: xs,
+      datasets: [
+        { label: 'Pumpe',   data: rows.map(function(r){ return r[7]; }), borderColor: '#f59e0b', stepped: true, pointRadius: 0 },
+        { label: 'Ventil Pool', data: rows.map(function(r){ return r[8]; }), borderColor: '#60a5fa', stepped: true, pointRadius: 0 },
+        { label: 'Zirk',    data: rows.map(function(r){ return r[9]; }), borderColor: '#22c55e', stepped: true, pointRadius: 0 },
+        { label: 'Licht',   data: rows.map(function(r){ return r[10]; }), borderColor: '#e4e4e7', stepped: true, pointRadius: 0 }
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      scales: {
+        x: { display: false },
+        y: { min: -0.05, max: 1.05, ticks: { stepSize: 1 } }
+      },
+      plugins: { legend: { labels: { color: '#a1a1aa' } } }
+    }
+  });
 }
 
 connect();

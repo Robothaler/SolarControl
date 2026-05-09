@@ -25,6 +25,9 @@ extern Screen  currentScreen;   // ← war private static, jetzt extern
 // ── Initialisierung ───────────────────────────────────────────────────────────
 void init();
 
+/** OLED u8g2 Power-Save (0=an, 1=Panel aus). Wird von SolarLogic PIR-Logik gesteuert. */
+void setOledSleep(bool sleep);
+
 // ── Screens ───────────────────────────────────────────────────────────────────
 void showBootScreen();
 void showCommissioningScreen(const char* qrCodePayload,

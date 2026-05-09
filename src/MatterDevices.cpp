@@ -3,14 +3,27 @@
 #include <esp_matter.h>
 #include <esp_matter_cluster.h>
 #include <esp_matter_endpoint.h>
+#include <esp_matter_client.h>
+#include <esp_matter_core.h>
 #include <esp_log.h>
 #include <lib/core/TLV.h>
 #include <cstring>
+#include <cinttypes>
+#include <memory>
+
+#include <app/MessageDef/StatusIB.h>
+#include <app/ReadClient.h>
+#include <app/server/Server.h>
+#include <platform/PlatformManager.h>
+#include <protocols/interaction_model/StatusCode.h>
 
 // Forward-Deklarationen: nicht direkt inkludieren (LWIP-Konflikt)
 namespace SolarLogic {
     enum class Mode : uint8_t { AUTO = 0, MANUAL_POOL = 1, MANUAL_BOILER = 2 };
     void setMode(Mode mode);
+    void onPoolTempReceived(float temp);
+    void onPoolSolltempReceived(float solltemp);
+    void onPoolModeRequestReceived(bool requested);
 }
 namespace CirculationLogic {
     bool requestRun();
@@ -487,7 +500,156 @@ esp_err_t postStart()
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// subscribeToPoolMaster – unverändert
+// PoolMaster-Client: Attribute-Subscribe (TemperatureMeasurement ×2, OnOff ×1)
+// Datenmodell identisch zu ESP32-PoolMaster Matter_dev (MatterBridge.cpp).
+// ─────────────────────────────────────────────────────────────────────────────
+
+namespace {
+
+using chip::Protocols::InteractionModel::Status;
+
+struct PendingPoolMasterConnect {
+    bool               valid       = false;
+    uint64_t           nodeId      = 0;
+    chip::FabricIndex  fabricIndex = chip::kMinValidFabricIndex;
+    uint16_t           epTemp      = 0;
+    uint16_t           epSoll     = 0;
+    uint16_t           epMode      = 0;
+};
+
+static PendingPoolMasterConnect s_poolPending;
+static bool                     s_poolRequestCbRegistered = false;
+
+class PoolMasterSubscriptionCallback final : public chip::app::ReadClient::Callback {
+public:
+    PoolMasterSubscriptionCallback(uint16_t epTemp, uint16_t epSoll, uint16_t epMode)
+        : m_epTemp(epTemp), m_epSoll(epSoll), m_epMode(epMode)
+    {
+        m_paths = std::make_unique<chip::app::AttributePathParams[]>(3);
+        m_paths[0] = chip::app::AttributePathParams(m_epTemp, kClusterTempMeas, kAttrMeasuredValue);
+        m_paths[1] = chip::app::AttributePathParams(m_epSoll, kClusterTempMeas, kAttrMeasuredValue);
+        m_paths[2] = chip::app::AttributePathParams(m_epMode, kClusterOnOff, kAttrOnOff);
+    }
+
+    chip::app::AttributePathParams* paths() { return m_paths.get(); }
+
+    void OnAttributeData(const chip::app::ConcreteDataAttributePath& path,
+                         chip::TLV::TLVReader* apData,
+                         const chip::app::StatusIB& aStatus) override
+    {
+        if (aStatus.mStatus != Status::Success || apData == nullptr) {
+            return;
+        }
+        if (path.mClusterId == kClusterTempMeas && path.mAttributeId == kAttrMeasuredValue)
+        {
+            int16_t raw = 0;
+            if (apData->Get(raw) != CHIP_NO_ERROR) {
+                return;
+            }
+            const float celsius = raw / 100.0f;
+            if (path.mEndpointId == m_epTemp) {
+                SolarLogic::onPoolTempReceived(celsius);
+            } else if (path.mEndpointId == m_epSoll) {
+                SolarLogic::onPoolSolltempReceived(celsius);
+            }
+        } else if (path.mClusterId == kClusterOnOff && path.mAttributeId == kAttrOnOff)
+        {
+            bool on = false;
+            if (apData->Get(on) != CHIP_NO_ERROR) {
+                return;
+            }
+            if (path.mEndpointId == m_epMode) {
+                SolarLogic::onPoolModeRequestReceived(on);
+            }
+        }
+    }
+
+    void OnSubscriptionEstablished(chip::SubscriptionId id) override
+    {
+        ESP_LOGI(TAG, "PoolMaster: Subscription aktiv (SubId=%" PRIu32 ")", id);
+    }
+
+    void OnError(CHIP_ERROR err) override
+    {
+        ESP_LOGE(TAG, "PoolMaster: Subscribe/Report-Fehler: %" CHIP_ERROR_FORMAT, err.Format());
+    }
+
+    void OnDone(chip::app::ReadClient*) override
+    {
+        m_paths.reset();
+        delete this;
+    }
+
+private:
+    uint16_t m_epTemp;
+    uint16_t m_epSoll;
+    uint16_t m_epMode;
+    std::unique_ptr<chip::app::AttributePathParams[]> m_paths;
+};
+
+static void poolMasterDeviceConnected(esp_matter::client::peer_device_t* peer,
+                                      esp_matter::client::request_handle_t* /*req*/,
+                                      void* /*priv*/)
+{
+    if (!s_poolPending.valid) {
+        return;
+    }
+
+    const uint16_t epT = s_poolPending.epTemp;
+    const uint16_t epS = s_poolPending.epSoll;
+    const uint16_t epM = s_poolPending.epMode;
+    s_poolPending.valid = false;
+
+    auto* cb = new PoolMasterSubscriptionCallback(epT, epS, epM);
+    esp_err_t err = esp_matter::client::interaction::subscribe::send_request(
+        peer, cb->paths(), 3, nullptr, 0,
+        10, 60, true, true, *cb);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "PoolMaster: subscribe::send_request → %s", esp_err_to_name(err));
+        delete cb;
+        return;
+    }
+    ESP_LOGI(TAG, "PoolMaster: Subscribe-Request gesendet (EP %u / %u / %u)", epT, epS, epM);
+}
+
+static void ensurePoolMasterClientCallback()
+{
+    if (s_poolRequestCbRegistered) {
+        return;
+    }
+    esp_matter::client::set_request_callback(poolMasterDeviceConnected, nullptr, nullptr);
+    s_poolRequestCbRegistered = true;
+}
+
+static void poolMasterConnectWork(intptr_t /*arg*/)
+{
+    if (!s_poolPending.valid) {
+        return;
+    }
+    chip::CASESessionManager* caseMgr = chip::Server::GetInstance().GetCASESessionManager();
+    if (caseMgr == nullptr) {
+        ESP_LOGE(TAG, "PoolMaster: CASESessionManager nicht verfügbar");
+        s_poolPending.valid = false;
+        return;
+    }
+
+    esp_matter::client::request_handle_t rh{};
+    rh.type = esp_matter::client::READ_ATTR;
+
+    const uint64_t nodeId = s_poolPending.nodeId;
+    const chip::FabricIndex fabricIdx = s_poolPending.fabricIndex;
+
+    esp_err_t err = esp_matter::client::connect(caseMgr, fabricIdx, nodeId, &rh);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "PoolMaster: client::connect → %s", esp_err_to_name(err));
+        s_poolPending.valid = false;
+    }
+}
+
+} // namespace
+
+// ─────────────────────────────────────────────────────────────────────────────
+// subscribeToPoolMaster
 // ─────────────────────────────────────────────────────────────────────────────
 esp_err_t subscribeToPoolMaster(uint64_t poolNodeId,
                                  uint16_t epPoolTemp,
@@ -498,9 +660,38 @@ esp_err_t subscribeToPoolMaster(uint64_t poolNodeId,
         ESP_LOGW(TAG, "PoolMaster NodeID = 0 → noch nicht konfiguriert");
         return ESP_ERR_INVALID_ARG;
     }
-    ESP_LOGI(TAG, "Subscription zu PoolMaster NodeID: 0x%016llX", poolNodeId);
-    ESP_LOGI(TAG, "  EP%d: Pool_Temp  EP%d: Pool_Soll  EP%d: Solar_Mode",
+    const auto& fabricTable = chip::Server::GetInstance().GetFabricTable();
+    if (fabricTable.FabricCount() == 0) {
+        ESP_LOGW(TAG, "PoolMaster: keine Fabric — erst Commissioning abschließen");
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    auto it = fabricTable.begin();
+    if (it == fabricTable.end()) {
+        ESP_LOGW(TAG, "PoolMaster: FabricTable-Iterator leer");
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    ensurePoolMasterClientCallback();
+
+    s_poolPending.valid       = true;
+    s_poolPending.nodeId      = poolNodeId;
+    s_poolPending.fabricIndex = (*it).GetFabricIndex();
+    s_poolPending.epTemp      = epPoolTemp;
+    s_poolPending.epSoll      = epPoolSolltemp;
+    s_poolPending.epMode     = epSolarMode;
+
+    ESP_LOGI(TAG, "PoolMaster: verbinde + subscribe NodeID 0x%016llX  Fabric=%u",
+             poolNodeId, static_cast<unsigned>(s_poolPending.fabricIndex));
+    ESP_LOGI(TAG, "  EP%u: Pool_Temp (TempMeas)  EP%u: Pool_Soll  EP%u: Solar_Mode (OnOff)",
              epPoolTemp, epPoolSolltemp, epSolarMode);
+
+    CHIP_ERROR schedErr = chip::DeviceLayer::PlatformMgr().ScheduleWork(poolMasterConnectWork, 0);
+    if (schedErr != CHIP_NO_ERROR) {
+        s_poolPending.valid = false;
+        ESP_LOGE(TAG, "PoolMaster: ScheduleWork(connect) → %" CHIP_ERROR_FORMAT, schedErr.Format());
+        return ESP_FAIL;
+    }
     return ESP_OK;
 }
 

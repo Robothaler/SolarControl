@@ -1,9 +1,11 @@
 #include "WebUI.h"
 #include "SolarLogic.h"
+#include "PoolHttpBridge.h"
 #include "Display.h"
 #include "Config.h"
 #include "MatterBridge.h"
 #include "WebSerial.h"
+#include "HistoryLog.h"
 
 #include <esp_http_server.h>
 #include <esp_log.h>
@@ -18,10 +20,11 @@
 #include <esp_wifi.h>     // esp_wifi_sta_get_ap_info, wifi_ap_record_t
 #include <Update.h>
 #include <WiFi.h>
-#include <ArduinoJson.h>
 #include <Arduino.h>
+#include <ArduinoJson.h>
+#include <cstring>
 #include <nvs.h>
-#include <time.h>
+#include <cstdlib>
 #include <string.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -237,7 +240,10 @@ static void build_json(char* buf, size_t len, bool include_full) {
         "\"uptime\":%lu,"
         "\"freeHeap\":%u,"
         "\"webSerial\":%s,"
-        "\"version\":\"%s\"",
+        "\"version\":\"%s\","
+        "\"tempDiffOn\":%.1f,"
+        "\"tempDiffOff\":%.1f,"
+        "\"levelWarnPct\":%.0f",
         s.roofTemp, s.boilerTemp, s.storageTemp, s.backflowTemp,
         s.poolTemp, s.poolSollTemp,
         s.pumpRunning     ? "true" : "false",
@@ -257,7 +263,10 @@ static void build_json(char* buf, size_t len, bool include_full) {
         millis() / 1000UL,
         (unsigned)ESP.getFreeHeap(),
         WebSerial::isActive() ? "true" : "false",
-        APP_VERSION);
+        APP_VERSION,
+        SolarLogic::tunables.tempDiffOn,
+        SolarLogic::tunables.tempDiffOff,
+        SolarLogic::tunables.levelWarnPct);
 
     // Echtzeit-Uhr (lokale Zeit) für UI-Anzeige
     if (n > 0 && (size_t)n < len) {
@@ -354,7 +363,7 @@ static esp_err_t status_handler(httpd_req_t* req) {
         }
     }
 
-    char buf[1024];
+    char buf[1400];
     build_json(buf, sizeof(buf), full);
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_sendstr(req, buf);
@@ -366,6 +375,63 @@ static esp_err_t matter_handler(httpd_req_t* req) {
     build_matter_json(buf, sizeof(buf));
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_sendstr(req, buf);
+}
+
+// GET /api/history → Verlaufsdaten für Chart.js
+// Ohne Query: RAM-Ring (~2 h). Mit ?from=&to= (Unix-UTC) optional &pts=N: SPIFFS-Langzeit.
+static esp_err_t history_handler(httpd_req_t* req) {
+    char   query[144] = {0};
+    bool   rangeQuery = false;
+    uint32_t fromTs = 0, toTs = 0;
+    uint16_t maxPts = 600;
+
+    if (httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK) {
+        char val[24];
+        if (httpd_query_key_value(query, "from", val, sizeof(val)) == ESP_OK) {
+            fromTs     = (uint32_t)strtoul(val, nullptr, 10);
+            rangeQuery = true;
+        }
+        if (httpd_query_key_value(query, "to", val, sizeof(val)) == ESP_OK) {
+            toTs       = (uint32_t)strtoul(val, nullptr, 10);
+            rangeQuery = true;
+        }
+        if (httpd_query_key_value(query, "pts", val, sizeof(val)) == ESP_OK) {
+            maxPts = (uint16_t)strtoul(val, nullptr, 10);
+        }
+    }
+
+    constexpr size_t kRamCap   = 45000;
+    constexpr size_t kRangeCap = 98304;
+    const size_t     cap       = rangeQuery ? kRangeCap : kRamCap;
+
+    char* buf = static_cast<char*>(malloc(cap));
+    if (!buf) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "oom");
+        return ESP_FAIL;
+    }
+
+    size_t n = 0;
+    if (rangeQuery) {
+        uint32_t now = (uint32_t)time(nullptr);
+        if (toTs == 0) toTs = now;
+        if (fromTs == 0) {
+            fromTs = (toTs > 86400UL * 7UL) ? (toTs - 86400UL * 7UL) : 0;
+        }
+        n = HistoryLog_buildJsonRange(fromTs, toTs, maxPts, buf, cap);
+    } else {
+        n = HistoryLog_buildJson(buf, kRamCap);
+    }
+
+    if (n == 0) {
+        free(buf);
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "history");
+        return ESP_FAIL;
+    }
+    buf[n] = '\0';
+    httpd_resp_set_type(req, "application/json");
+    esp_err_t e = httpd_resp_send(req, buf, n);
+    free(buf);
+    return e;
 }
 
 // =============================================================================
@@ -385,13 +451,18 @@ struct WebSettings {
     char pass[65];
     bool apFallback;
 
+    char     poolHttpBase[141];
+    uint32_t poolHttpMs;
+
     void loadDefaults() {
         snprintf(tz,   sizeof(tz),   "%s", TIMEZONE_POSIX);
         snprintf(ntp1, sizeof(ntp1), "%s", NTP_SERVER_PRIMARY);
         snprintf(ntp2, sizeof(ntp2), "%s", NTP_SERVER_SECONDARY);
         ssid[0] = '\0';
         pass[0] = '\0';
-        apFallback = true;
+        apFallback           = true;
+        poolHttpBase[0]      = '\0';
+        poolHttpMs           = 5000;
     }
 };
 
@@ -408,7 +479,29 @@ static void settings_load(WebSettings& s) {
     uint8_t ap = 1;
     nvs_get_u8(nvs, NVS_KEY_AP_FALLBACK, &ap);
     s.apFallback = (ap != 0);
+
+    l = sizeof(s.poolHttpBase);
+    if (nvs_get_str(nvs, NVS_KEY_POOL_HTTP_BASE, s.poolHttpBase, &l) != ESP_OK)
+        s.poolHttpBase[0] = '\0';
+
+    uint32_t piv = 5000;
+    if (nvs_get_u32(nvs, NVS_KEY_POOL_HTTP_IV, &piv) == ESP_OK
+        && piv >= 1000 && piv <= 600000)
+    {
+        s.poolHttpMs = piv;
+    } else {
+        s.poolHttpMs = 5000;
+    }
+
     nvs_close(nvs);
+
+    if (s.poolHttpBase[0] == '\0') {
+        const char* def = POOL_HTTP_BASE_DEFAULT;
+        if (def && def[0] != '\0') {
+            strncpy(s.poolHttpBase, def, sizeof(s.poolHttpBase) - 1);
+            s.poolHttpBase[sizeof(s.poolHttpBase) - 1] = '\0';
+        }
+    }
 }
 
 // Persistiert nur die NICHT-WiFi-Felder (TZ/NTP/AP-Fallback). WiFi-Credentials
@@ -433,18 +526,30 @@ static esp_err_t settings_save(const WebSettings& s) {
 static esp_err_t settings_get_handler(httpd_req_t* req) {
     WebSettings s;
     settings_load(s);
-    char buf[480];
-    snprintf(buf, sizeof(buf),
-        "{\"type\":\"settings\","
-         "\"tz\":\"%s\",\"ntp1\":\"%s\",\"ntp2\":\"%s\","
-         "\"apFallback\":%s,"
-         "\"ssid\":\"%s\",\"passSet\":%s}",
-        s.tz, s.ntp1, s.ntp2,
-        s.apFallback ? "true" : "false",
-        s.ssid,
-        (s.pass[0] != '\0') ? "true" : "false");
+    StaticJsonDocument<896> jd;
+    jd["type"]         = "settings";
+    jd["tz"]           = s.tz;
+    jd["ntp1"]         = s.ntp1;
+    jd["ntp2"]         = s.ntp2;
+    jd["apFallback"]   = s.apFallback;
+    jd["ssid"]         = s.ssid;
+    jd["passSet"]      = (s.pass[0] != '\0');
+    jd["tempDiffOn"]   = SolarLogic::tunables.tempDiffOn;
+    jd["tempDiffOff"]  = SolarLogic::tunables.tempDiffOff;
+    jd["levelWarnPct"] = SolarLogic::tunables.levelWarnPct;
+    jd["poolHttpBase"] = s.poolHttpBase;
+    jd["poolHttpMs"]   = s.poolHttpMs;
+    jd["poolHttpTokSet"]  = PoolHttpBridge::hasTokenConfigured();
+    jd["poolHttpLastOk"]  = PoolHttpBridge::lastFetchOk();
+
+    char buf[896];
+    const size_t n = serializeJson(jd, buf, sizeof(buf));
+    if (n == 0 || n >= sizeof(buf)) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "settings json");
+        return ESP_FAIL;
+    }
     httpd_resp_set_type(req, "application/json");
-    return httpd_resp_sendstr(req, buf);
+    return httpd_resp_send(req, buf, n);
 }
 
 // POST /api/settings → akzeptiert JSON-Body { tz, ntp1, ntp2, apFallback }
@@ -466,7 +571,7 @@ static esp_err_t settings_post_handler(httpd_req_t* req) {
     }
     body[off] = '\0';
 
-    StaticJsonDocument<512> doc;
+    StaticJsonDocument<896> doc;
     if (deserializeJson(doc, body) != DeserializationError::Ok) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
         return ESP_FAIL;
@@ -479,6 +584,48 @@ static esp_err_t settings_post_handler(httpd_req_t* req) {
     if (doc.containsKey("ntp1"))       snprintf(s.ntp1, sizeof(s.ntp1), "%s", doc["ntp1"].as<const char*>());
     if (doc.containsKey("ntp2"))       snprintf(s.ntp2, sizeof(s.ntp2), "%s", doc["ntp2"].as<const char*>());
     if (doc.containsKey("apFallback")) s.apFallback = doc["apFallback"].as<bool>();
+
+    bool solarTuned = false;
+    float tdOn  = SolarLogic::tunables.tempDiffOn;
+    float tdOff = SolarLogic::tunables.tempDiffOff;
+    float lvlW  = SolarLogic::tunables.levelWarnPct;
+    if (doc.containsKey("tempDiffOn"))   { tdOn  = doc["tempDiffOn"].as<float>();   solarTuned = true; }
+    if (doc.containsKey("tempDiffOff"))  { tdOff = doc["tempDiffOff"].as<float>();  solarTuned = true; }
+    if (doc.containsKey("levelWarnPct")) { lvlW  = doc["levelWarnPct"].as<float>(); solarTuned = true; }
+    if (solarTuned) {
+        SolarLogic::setTunables(tdOn, tdOff, lvlW);
+    }
+
+    // Pool ↔ Solar HTTP-Brücke (gleiche Datenfelder wie Matter-Subscribe vom PoolMaster)
+    if (doc.containsKey("poolHttpClear") && doc["poolHttpClear"].as<bool>()) {
+        PoolHttpBridge::saveConfig("", PoolHttpBridge::TokenSaveMode::Clear, nullptr, 5000);
+    } else if (doc.containsKey("poolHttpBase") ||
+               doc.containsKey("poolHttpMs") || doc.containsKey("poolHttpTok")) {
+        const char* base =
+            doc.containsKey("poolHttpBase") ? doc["poolHttpBase"].as<const char*>() : s.poolHttpBase;
+        uint32_t iv = s.poolHttpMs;
+        if (doc.containsKey("poolHttpMs")) {
+            iv = static_cast<uint32_t>(doc["poolHttpMs"].as<unsigned long>());
+        }
+        PoolHttpBridge::TokenSaveMode tm    = PoolHttpBridge::TokenSaveMode::Keep;
+        const char*                  tokS = nullptr;
+        char                         tokBuf[80];
+        if (doc.containsKey("poolHttpTok")) {
+            const char* t = doc["poolHttpTok"].as<const char*>();
+            if (t) {
+                if (t[0] == '\0') {
+                    tm = PoolHttpBridge::TokenSaveMode::Clear;
+                } else {
+                    tm    = PoolHttpBridge::TokenSaveMode::Set;
+                    snprintf(tokBuf, sizeof(tokBuf), "%s", t);
+                    tokS = tokBuf;
+                }
+            }
+        }
+        if (base && base[0] != '\0') {
+            PoolHttpBridge::saveConfig(base, tm, tokS, iv);
+        }
+    }
 
     if (settings_save(s) != ESP_OK) {
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "NVS write failed");
@@ -517,6 +664,37 @@ static esp_err_t settings_post_handler(httpd_req_t* req) {
     return httpd_resp_sendstr(req, ok);
 }
 
+// GET /api/pool-solar/v1/solar — Replikat der Matter-gespiegelten Solar-Werte für den PoolMaster
+static esp_err_t pool_solar_v1_solar_handler(httpd_req_t* req)
+{
+    const SolarLogic::State& s = SolarLogic::state;
+    const char* modeStr =
+        s.currentMode == SolarLogic::Mode::AUTO ? "AUTO"
+        : s.currentMode == SolarLogic::Mode::MANUAL_POOL ? "MANUAL_POOL"
+                                                         : "MANUAL_BOILER";
+    StaticJsonDocument<480> jd;
+    jd["schema"]            = "pool-solar-bridge/v1";
+    jd["mode"]              = modeStr;
+    jd["modeEp1"]           = static_cast<uint8_t>(s.currentMode);
+    jd["pumpOn"]            = s.pumpRunning;
+    jd["valvePool"]         = s.valvePool;
+    jd["valveFeedbackEp3"]  = SolarLogic::valveEndswitchIndicatesPool() ? 1u : 0u;
+    jd["roofTemp_C"]        = s.roofTemp;
+    jd["boilerTemp_C"]      = s.boilerTemp;
+    jd["circulationOn"]     = s.circulationOn;
+    jd["illuminationOn"]    = s.illuminationOn;
+    jd["poolModeRequestHw"] = s.poolModeRequest;
+
+    char buf[512];
+    const size_t n = serializeJson(jd, buf, sizeof(buf));
+    if (n == 0 || n >= sizeof(buf)) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "pool-solar json");
+        return ESP_FAIL;
+    }
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, buf, n);
+}
+
 // GET /favicon.ico  →  204
 static esp_err_t favicon_handler(httpd_req_t* req) {
     httpd_resp_set_status(req, "204 No Content");
@@ -531,13 +709,27 @@ static esp_err_t ws_handler(httpd_req_t* req) {
         ESP_LOGI(TAG, "WS client connected fd=%d", httpd_req_to_sockfd(req));
         // Send initial status (mit System-Snapshot, damit das UI direkt alle
         // System-Info-Felder befüllen kann ohne extra Roundtrip).
-        char buf[1024];
+        char buf[1400];
         build_json(buf, sizeof(buf), true);
         httpd_ws_frame_t frame{};
         frame.type    = HTTPD_WS_TYPE_TEXT;
         frame.payload = reinterpret_cast<uint8_t*>(buf);
         frame.len     = strlen(buf);
         httpd_ws_send_frame(req, &frame);
+
+        constexpr size_t kHistCap = 45000;
+        char* hbuf = static_cast<char*>(malloc(kHistCap));
+        if (hbuf) {
+            size_t hn = HistoryLog_buildJson(hbuf, kHistCap);
+            if (hn > 0) {
+                httpd_ws_frame_t hf{};
+                hf.type    = HTTPD_WS_TYPE_TEXT;
+                hf.payload = reinterpret_cast<uint8_t*>(hbuf);
+                hf.len     = hn;
+                httpd_ws_send_frame(req, &hf);
+            }
+            free(hbuf);
+        }
         return ESP_OK;
     }
 
@@ -701,7 +893,7 @@ static esp_err_t update_handler(httpd_req_t* req) {
 // Terminal sich responsiv anfühlt. Der teure Status-JSON wird nur alle 8 Ticks
 // (≈ 2 s) gebaut + gesendet — die WebSerial-Drain läuft jeden Tick.
 //
-static char _bcast_buf[1024];   // static: valid for async send lifetime
+static char _bcast_buf[1400];   // static: valid for async send lifetime
 static char _ws_buf[1024];      // WebSerial-Drain-Frame
 static char _ws_json[1280];     // {"type":"webserial","data":"<escaped>"}
 
@@ -786,7 +978,7 @@ void begin() {
     httpd_config_t cfg  = HTTPD_DEFAULT_CONFIG();
     cfg.server_port     = WEBUI_PORT;
     cfg.max_open_sockets = MAX_WS_CLIENTS + 2;
-    cfg.max_uri_handlers = 12;
+    cfg.max_uri_handlers = 14;
     cfg.stack_size       = 8192;
     cfg.lru_purge_enable = true;
 
@@ -799,6 +991,10 @@ void begin() {
     httpd_uri_t uri_root      = { "/",             HTTP_GET,  root_handler,         nullptr };
     httpd_uri_t uri_status    = { "/api/status",   HTTP_GET,  status_handler,       nullptr };
     httpd_uri_t uri_matter    = { "/api/matter",   HTTP_GET,  matter_handler,       nullptr };
+    httpd_uri_t uri_history   = { "/api/history",  HTTP_GET,  history_handler,      nullptr };
+    httpd_uri_t uri_pool_solar = {
+        "/api/pool-solar/v1/solar", HTTP_GET, pool_solar_v1_solar_handler, nullptr
+    };
     httpd_uri_t uri_set_get   = { "/api/settings", HTTP_GET,  settings_get_handler, nullptr };
     httpd_uri_t uri_set_post  = { "/api/settings", HTTP_POST, settings_post_handler,nullptr };
     httpd_uri_t uri_fav       = { "/favicon.ico",  HTTP_GET,  favicon_handler,      nullptr };
@@ -814,6 +1010,8 @@ void begin() {
     httpd_register_uri_handler(_server, &uri_root);
     httpd_register_uri_handler(_server, &uri_status);
     httpd_register_uri_handler(_server, &uri_matter);
+    httpd_register_uri_handler(_server, &uri_history);
+    httpd_register_uri_handler(_server, &uri_pool_solar);
     httpd_register_uri_handler(_server, &uri_set_get);
     httpd_register_uri_handler(_server, &uri_set_post);
     httpd_register_uri_handler(_server, &uri_fav);

@@ -3,8 +3,10 @@
 #include "Config.h"
 
 #include <Adafruit_MAX31865.h>
-#include <OneWire.h>
-#include <DallasTemperature.h>
+#if DS18B20_ENABLED
+  #include <OneWire.h>
+  #include <DallasTemperature.h>
+#endif
 #include <nvs_flash.h>
 #include <nvs.h>
 #include <esp_log.h>
@@ -16,34 +18,56 @@
 // Nur noch die Funktionen, die SolarLogic tatsächlich aufruft:
 namespace MatterDevices {
     esp_err_t updatePumpState(bool running);
-    esp_err_t updateValveFeedback(uint8_t mode);    // 0=BOILER, 1=POOL
     esp_err_t updateCirculationState(bool on);
 }
 
 static const char* TAG = "SolarLogic";
 
-// ── 2× MAX31865 auf gemeinsamem SPI2-Bus ──────────────────────────────────
-// Konstruktor: Adafruit_MAX31865(cs, mosi, miso, sck) → Software-SPI
-// ODER:        Adafruit_MAX31865(cs)                  → Hardware-SPI
-// Wir nutzen Hardware-SPI2 mit expliziter Bus-Konfiguration:
-static SPIClass          spi2(HSPI);
-static Adafruit_MAX31865 max31865_roof(PIN_CS_MAX31865_ROOF,
-                                       &spi2);   // Kollektor/Dach
-static Adafruit_MAX31865 max31865_boiler(PIN_CS_MAX31865_BOILER,
-                                          &spi2); // Boiler
+// PIR/Display: Deadline wie PIR_TimerComparison im Arduino-Sketch (millis()-Basis).
+static uint32_t motionDisplayDeadlineMs = 0;
+// Nach Ventilumschlag: Endschalter nicht mit Soll vergleichen (Mechanik läuft noch).
+static uint32_t s_valveEndsIgnoreUntilMs = 0;
 
+// ── 2× MAX31865 ───────────────────────────────────────────────────────────
+// Adafruit_MAX31865-Konstruktoren:
+//   Software-SPI (Bit-Banging): Adafruit_MAX31865(cs, mosi, miso, sck)
+//   Hardware-SPI:               Adafruit_MAX31865(cs, &SPIClass)
+// Modus wird in Config.h via MAX31865_USE_SOFT_SPI gewählt.
+#if MAX31865_USE_SOFT_SPI
+// Software-SPI: identisches Bus-Modell wie im Original-Sketch (Mega 2560).
+// Pin-Reihenfolge im Konstruktor: CS, MOSI, MISO, SCK
+static Adafruit_MAX31865 max31865_roof  (PIN_CS_MAX31865_ROOF,
+                                         PIN_SPI_MOSI,
+                                         PIN_SPI_MISO,
+                                         PIN_SPI_SCK);
+static Adafruit_MAX31865 max31865_boiler(PIN_CS_MAX31865_BOILER,
+                                         PIN_SPI_MOSI,
+                                         PIN_SPI_MISO,
+                                         PIN_SPI_SCK);
+#else
+// Hardware-SPI2 mit gemeinsamem Bus + getrennten CS-Lines.
+static SPIClass          spi2(HSPI);
+static Adafruit_MAX31865 max31865_roof  (PIN_CS_MAX31865_ROOF,   &spi2);
+static Adafruit_MAX31865 max31865_boiler(PIN_CS_MAX31865_BOILER, &spi2);
+#endif
+
+#if DS18B20_ENABLED
 // ── DS18B20 (2 Sensoren, OneWire-Bus) ─────────────────────────────────────
 static OneWire           oneWire(PIN_DS18B20);
 static DallasTemperature dsSensors(&oneWire);
+#endif
 
 // ── Timing ────────────────────────────────────────────────────────────────
 static unsigned long lastButtonPress   = 0;
+#if DS18B20_ENABLED
 static unsigned long dsRequestTime     = 0;
 static bool          dsConversionPending = false;
+#endif
 
 namespace SolarLogic {
 
 State state;
+Tunables tunables;
 
 // ────────────────────────────────────────────────────────────────────────────
 // Initialisierung
@@ -59,29 +83,52 @@ void init()
     // ── Eingabe-Pins ────────────────────────────────────────────────────────
     pinMode(PIN_VALVE_STATUS, INPUT_PULLUP);
     pinMode(PIN_BUTTON,       INPUT_PULLUP);
-    pinMode(PIN_MOTION,       INPUT);
-    pinMode(PIN_MOTION_POWER, OUTPUT); digitalWrite(PIN_MOTION_POWER, HIGH); // HC-SR501 einschalten
+#if MOTION_GPIO_PULLUP
+    pinMode(PIN_MOTION, INPUT_PULLUP);
+#else
+    pinMode(PIN_MOTION, INPUT);
+#endif
+    pinMode(PIN_MOTION_POWER, OUTPUT);
+#if MOTION_POWER_ACTIVE_HIGH
+    digitalWrite(PIN_MOTION_POWER, HIGH); // HC-SR501 einschalten
+#else
+    digitalWrite(PIN_MOTION_POWER, LOW);
+#endif
     // Pegelsonde: ADC1, kein pinMode nötig (analogRead direkt)
 
-    // ── SPI2 Bus initialisieren ─────────────────────────────────────────────
+    // ── SPI-Bus initialisieren ──────────────────────────────────────────────
+#if MAX31865_USE_SOFT_SPI
+    ESP_LOGI(TAG, "MAX31865 Modus: SOFTWARE-SPI  (CS1=%d  CS2=%d  "
+                  "SCK=%d  MOSI=%d  MISO=%d)",
+             PIN_CS_MAX31865_ROOF, PIN_CS_MAX31865_BOILER,
+             PIN_SPI_SCK, PIN_SPI_MOSI, PIN_SPI_MISO);
+#else
     spi2.begin(PIN_SPI_SCK, PIN_SPI_MISO, PIN_SPI_MOSI);
-    ESP_LOGI(TAG, "SPI2 Bus initialisiert: SCK=%d MISO=%d MOSI=%d",
+    ESP_LOGI(TAG, "MAX31865 Modus: HARDWARE-SPI2 (SCK=%d MISO=%d MOSI=%d)",
              PIN_SPI_SCK, PIN_SPI_MISO, PIN_SPI_MOSI);
+#endif
 
-    // ── MAX31865 #1 – Kollektor/Dach (PT1000, 3-Draht) ─────────────────────
-    if (!max31865_roof.begin(MAX31865_3WIRE)) {
-        ESP_LOGE(TAG, "MAX31865 Dach (CS=GPIO%d) nicht gefunden!", PIN_CS_MAX31865_ROOF);
-    } else {
-        ESP_LOGI(TAG, "MAX31865 Dach (CS=GPIO%d) initialisiert", PIN_CS_MAX31865_ROOF);
-    }
+    // Helper-Lambda: prüft per readFault(), ob der Sensor überhaupt antwortet.
+    // 0xFF in *jedem* Register = MISO floated → SPI-Bus tot oder kein Sensor.
+    auto probeSensor = [](Adafruit_MAX31865& s, const char* name, int csPin) {
+        bool ok = s.begin(MAX31865_WIRE_MODE);
+        uint8_t fault = s.readFault();
+        if (!ok || fault == 0xFF) {
+            ESP_LOGE(TAG, "MAX31865 %s (CS=GPIO%d) antwortet NICHT (begin=%d, "
+                          "fault=0x%02X). Pruefen: VCC/GND auf 3V3? "
+                          "SCK/MOSI/MISO/CS korrekt? Sensor verloetet?",
+                     name, csPin, ok ? 1 : 0, fault);
+        } else {
+            ESP_LOGI(TAG, "MAX31865 %s (CS=GPIO%d) OK (fault=0x%02X)",
+                     name, csPin, fault);
+            s.clearFault();
+        }
+    };
 
-    // ── MAX31865 #2 – Boiler (PT1000, 3-Draht) ─────────────────────────────
-    if (!max31865_boiler.begin(MAX31865_3WIRE)) {
-        ESP_LOGE(TAG, "MAX31865 Boiler (CS=GPIO%d) nicht gefunden!", PIN_CS_MAX31865_BOILER);
-    } else {
-        ESP_LOGI(TAG, "MAX31865 Boiler (CS=GPIO%d) initialisiert", PIN_CS_MAX31865_BOILER);
-    }
+    probeSensor(max31865_roof,   "Dach",   PIN_CS_MAX31865_ROOF);
+    probeSensor(max31865_boiler, "Boiler", PIN_CS_MAX31865_BOILER);
 
+#if DS18B20_ENABLED
     // ── DS18B20 ─────────────────────────────────────────────────────────────
     dsSensors.begin();
     // Nicht-blockierendes Konvertierungsmodell aktivieren
@@ -91,6 +138,9 @@ void init()
     if (count < 2) {
         ESP_LOGW(TAG, "Zu wenig DS18B20! Puffer- und Rücklauf-Sensor prüfen.");
     }
+#else
+    ESP_LOGI(TAG, "DS18B20 deaktiviert (DS18B20_ENABLED=0) – Bus-Polling übersprungen");
+#endif
 
     // ── NVS Konfiguration laden ─────────────────────────────────────────────
     loadConfigFromNVS();
@@ -149,6 +199,7 @@ void readTemperatures()
         }
     }
 
+#if DS18B20_ENABLED
     // ── DS18B20 – nicht-blockierendes Modell ────────────────────────────────
     if (!dsConversionPending) {
         // Konvertierung starten
@@ -183,6 +234,7 @@ void readTemperatures()
         // publiziert – DS18B20 Endpoints (Puffer, Rücklauf) sind im neuen
         // Matter-Modell nicht mehr vorgesehen (nur EP4=Dach, EP5=Boiler).
     }
+#endif // DS18B20_ENABLED
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -211,7 +263,7 @@ void readLevelSensor()
     }
 
     state.levelPct  = pct;
-    state.levelWarn = (pct < LEVEL_WARN_PCT);
+    state.levelWarn = (pct < tunables.levelWarnPct);
 
     ESP_LOGD(TAG, "Pegelsonde: ADC=%d → %.1f%% %s",
              adcVal, pct, state.levelWarn ? "⚠ WARNUNG" : "OK");
@@ -225,7 +277,13 @@ void update()
     // ── Sicherheitscheck: Sensoren plausibel? ───────────────────────────────
     bool roofOk    = (state.roofTemp    > TEMP_SENSOR_INVALID);
     bool boilerOk  = (state.boilerTemp  > TEMP_SENSOR_INVALID);
+#if DS18B20_ENABLED
     bool storageOk = (state.storageTemp > TEMP_SENSOR_INVALID);
+#else
+    // Ohne DS18B20-Bus existiert kein Speicher-Sensor → Wert nicht verwenden.
+    bool storageOk = false;
+    (void)storageOk;
+#endif
 
     if (!roofOk) {
         ESP_LOGE(TAG, "Sicherheit: Dach-Sensor ungueltig → Pumpe AUS");
@@ -273,8 +331,16 @@ void update()
         // Pool-Modus: Kollektor muss wärmer als Pool-Solltemp sein
         refTemp = state.poolSollTemp;
     } else {
-        // Boiler-Modus: Kollektor muss wärmer als Boiler sein
-        refTemp = boilerOk ? state.boilerTemp : state.storageTemp;
+        // Boiler-Modus: Kollektor muss wärmer als Boiler sein.
+        // Fallback auf Speicher-Sensor nur wenn DS18B20 aktiv ist und plausibel
+        // misst; sonst Sicherheitswert (verhindert ungewollte Pumpenfreigabe).
+        if (boilerOk) {
+            refTemp = state.boilerTemp;
+        } else if (storageOk) {
+            refTemp = state.storageTemp;
+        } else {
+            refTemp = state.roofTemp; // Diff = 0 → Pumpe bleibt aus
+        }
     }
 
     float diff = state.roofTemp - refTemp;
@@ -284,11 +350,11 @@ void update()
              state.pumpRunning ? "AN" : "AUS");
 
     // ── Pumpen-Hysterese ────────────────────────────────────────────────────
-    if (!state.pumpRunning && diff >= TEMP_DIFF_ON) {
-        ESP_LOGI(TAG, "Pumpe EIN: Diff=%.1f°C >= %.1f°C", diff, TEMP_DIFF_ON);
+    if (!state.pumpRunning && diff >= tunables.tempDiffOn) {
+        ESP_LOGI(TAG, "Pumpe EIN: Diff=%.1f°C >= %.1f°C", diff, tunables.tempDiffOn);
         setPump(true);
-    } else if (state.pumpRunning && diff <= TEMP_DIFF_OFF) {
-        ESP_LOGI(TAG, "Pumpe AUS: Diff=%.1f°C <= %.1f°C", diff, TEMP_DIFF_OFF);
+    } else if (state.pumpRunning && diff <= tunables.tempDiffOff) {
+        ESP_LOGI(TAG, "Pumpe AUS: Diff=%.1f°C <= %.1f°C", diff, tunables.tempDiffOff);
         setPump(false);
     }
 
@@ -321,9 +387,17 @@ void setPump(bool on)
 
 void setValve(bool poolMode)
 {
+    const bool changed = (state.valvePool != poolMode);
     state.valvePool = poolMode;
     digitalWrite(PIN_RELAY_VALVE, poolMode ? RELAY_ON : RELAY_OFF);
-    MatterDevices::updateValveFeedback(poolMode ? 1 : 0);  // 1=POOL, 0=BOILER
+    // Mega: VALVE_POOL=LOW, VALVE_PUFFERSPEICHER=HIGH — entspricht RELAY_ON/RELAY_OFF (active-low).
+    if (changed) {
+#if VALVE_FEEDBACK_IGNORE_AFTER_SWITCH_MS > 0
+        s_valveEndsIgnoreUntilMs = millis() + VALVE_FEEDBACK_IGNORE_AFTER_SWITCH_MS;
+#else
+        s_valveEndsIgnoreUntilMs = 0;
+#endif
+    }
     ESP_LOGI(TAG, "Ventil: %s", poolMode ? "POOL" : "BOILER");
 }
 
@@ -347,8 +421,16 @@ void setIllumination(bool on)
 void setMotionPower(bool on)
 {
     state.motionPowerOn = on;
+#if MOTION_POWER_ACTIVE_HIGH
     digitalWrite(PIN_MOTION_POWER, on ? HIGH : LOW);
-    if (!on) state.motionDetected = false;
+#else
+    digitalWrite(PIN_MOTION_POWER, on ? LOW : HIGH);
+#endif
+    if (!on) {
+        state.motionDetected      = false;
+        motionDisplayDeadlineMs   = 0;
+        Display::setOledSleep(false);
+    }
     ESP_LOGI(TAG, "Bewegungsmelder Power: %s", on ? "EIN" : "AUS");
 }
 
@@ -451,23 +533,88 @@ void handleButton()
 
 
 // ────────────────────────────────────────────────────────────────────────────
-// Bewegungsmelder Handler (Flanken-Erkennung)
+// Bewegungsmelder — Pegel + ActionPIR
+// Referenz: https://github.com/Robothaler/SolarControl/blob/main/src/main.ino
+//   ActionPIR(): PIR_POWER HIGH → PIR HIGH → LIGHT_PIN LOW + u8g2.setPowerSave(0) + Timer;
+//                 millis() >= Timer → LIGHT HIGH + setPowerSave(1)
+//                 PIR_POWER LOW → nur setPowerSave(0) (Display immer an)
+//   pinMode(PIR_PIN, INPUT); digitalRead(PIR_PIN)==HIGH = Bewegung
+// MOTION_ACTIVE_HIGH: 0 wenn Datenpin invertiert (LOW = Bewegung).
 // ────────────────────────────────────────────────────────────────────────────
 void handleMotion()
 {
-    static bool lastMotion = false;
-    bool detected = (digitalRead(PIN_MOTION) == HIGH);
+    const bool pinHigh      = (digitalRead(PIN_MOTION) == HIGH);
+    const bool motionActive = MOTION_ACTIVE_HIGH ? pinHigh : !pinHigh;
 
-    if (detected != lastMotion) {
-        lastMotion           = detected;
-        state.motionDetected = detected;
-        ESP_LOGI(TAG, "Bewegung: %s", detected ? "ERKANNT" : "KEINE");
+    static bool lastLogged = false;
+    if (motionActive != lastLogged) {
+        lastLogged = motionActive;
+        ESP_LOGI(TAG, "Bewegung: %s", motionActive ? "ERKANNT" : "KEINE");
     }
+    state.motionDetected = motionActive;
+
+    if (!state.motionPowerOn) {
+        motionDisplayDeadlineMs = 0;
+        Display::setOledSleep(false);
+        return;
+    }
+
+    const uint32_t now = millis();
+
+    if (motionActive) {
+#if MOTION_CONTROLS_ILLUMINATION
+        setIllumination(true);
+#endif
+        Display::setOledSleep(false);
+        motionDisplayDeadlineMs = now + MOTION_DISPLAY_ON_MS;
+    }
+
+    if (static_cast<int32_t>(now - motionDisplayDeadlineMs) >= 0) {
+#if MOTION_CONTROLS_ILLUMINATION
+        setIllumination(false);
+#endif
+        Display::setOledSleep(true);
+    }
+}
+
+bool valveEndswitchIndicatesPool()
+{
+#if VALVE_ENDSWITCH_LOW_MEANS_POOL
+    return digitalRead(PIN_VALVE_STATUS) == LOW;
+#else
+    return digitalRead(PIN_VALVE_STATUS) == HIGH;
+#endif
+}
+
+void pollValveEnds()
+{
+#if VALVE_FEEDBACK_IGNORE_AFTER_SWITCH_MS > 0
+    const uint32_t now = millis();
+    if ((int32_t)(now - s_valveEndsIgnoreUntilMs) < 0) {
+        return;
+    }
+#endif
+    const bool sensePool = valveEndswitchIndicatesPool();
+    state.valveStatusOK  = (sensePool == state.valvePool);
 }
 
 // ────────────────────────────────────────────────────────────────────────────
 // NVS Persistenz – Konfiguration speichern
 // ────────────────────────────────────────────────────────────────────────────
+void setTunables(float on, float off, float levelWarn)
+{
+    if (on < 0.5f) on = 0.5f;
+    if (on > 50.f) on = 50.f;
+    if (off < 0.f) off = 0.f;
+    if (off > on - 0.5f) off = on - 0.5f;
+    if (levelWarn < 0.f) levelWarn = 0.f;
+    if (levelWarn > 99.f) levelWarn = 99.f;
+    tunables.tempDiffOn   = on;
+    tunables.tempDiffOff  = off;
+    tunables.levelWarnPct = levelWarn;
+    saveConfigToNVS();
+}
+
 void saveConfigToNVS()
 {
     nvs_handle_t handle;
@@ -479,12 +626,13 @@ void saveConfigToNVS()
 
     nvs_set_u8(handle, NVS_KEY_SOLAR_MODE, static_cast<uint8_t>(state.currentMode));
 
-    // Float als uint32 (Bit-cast) speichern
-    uint32_t diffOn, diffOff;
-    memcpy(&diffOn,  &TEMP_DIFF_ON,  sizeof(float));
-    memcpy(&diffOff, &TEMP_DIFF_OFF, sizeof(float));
-    nvs_set_u32(handle, NVS_KEY_TEMP_DIFF_ON,  diffOn);
-    nvs_set_u32(handle, NVS_KEY_TEMP_DIFF_OFF, diffOff);
+    uint32_t diffOn, diffOff, lvlW;
+    memcpy(&diffOn,  &tunables.tempDiffOn,   sizeof(float));
+    memcpy(&diffOff, &tunables.tempDiffOff,  sizeof(float));
+    memcpy(&lvlW,    &tunables.levelWarnPct, sizeof(float));
+    nvs_set_u32(handle, NVS_KEY_TEMP_DIFF_ON,   diffOn);
+    nvs_set_u32(handle, NVS_KEY_TEMP_DIFF_OFF,  diffOff);
+    nvs_set_u32(handle, NVS_KEY_LEVEL_WARN_PCT, lvlW);
 
     err = nvs_commit(handle);
     if (err != ESP_OK) {
@@ -516,9 +664,25 @@ void loadConfigFromNVS()
     nvs_get_u8(handle, NVS_KEY_SOLAR_MODE, &modeVal);
     state.currentMode = static_cast<Mode>(modeVal);
 
+    uint32_t u;
+    float f;
+    if (nvs_get_u32(handle, NVS_KEY_TEMP_DIFF_ON, &u) == ESP_OK) {
+        memcpy(&f, &u, sizeof(f));
+        if (f >= 0.5f && f <= 50.f) tunables.tempDiffOn = f;
+    }
+    if (nvs_get_u32(handle, NVS_KEY_TEMP_DIFF_OFF, &u) == ESP_OK) {
+        memcpy(&f, &u, sizeof(f));
+        if (f >= 0.f && f < tunables.tempDiffOn) tunables.tempDiffOff = f;
+    }
+    if (nvs_get_u32(handle, NVS_KEY_LEVEL_WARN_PCT, &u) == ESP_OK) {
+        memcpy(&f, &u, sizeof(f));
+        if (f >= 0.f && f <= 99.f) tunables.levelWarnPct = f;
+    }
+
     nvs_close(handle);
-    ESP_LOGI(TAG, "Konfiguration aus NVS geladen: Modus=%d",
-             static_cast<int>(state.currentMode));
+    ESP_LOGI(TAG, "Konfiguration aus NVS: Modus=%d  dT EIN=%.1f AUS=%.1f  Pegel-Warn=%.0f%%",
+             static_cast<int>(state.currentMode),
+             tunables.tempDiffOn, tunables.tempDiffOff, tunables.levelWarnPct);
 }
 
 } // namespace SolarLogic

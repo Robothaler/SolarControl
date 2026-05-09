@@ -48,6 +48,17 @@ struct State {
 // Globaler Zustand
 extern State state;
 
+// Laufzeit-Konfiguration (NVS + WebUI; Startwerte aus Config.h-Makros)
+struct Tunables {
+    float tempDiffOn   = TEMP_DIFF_ON;
+    float tempDiffOff  = TEMP_DIFF_OFF;
+    float levelWarnPct = LEVEL_WARN_PCT;
+};
+extern Tunables tunables;
+
+// Werte setzen (mit Plausibilitäts-Clamps), NVS speichern
+void setTunables(float tempDiffOn, float tempDiffOff, float levelWarnPct);
+
 // Initialisierung
 void init();
 
@@ -57,6 +68,10 @@ void readLevelSensor();   // Pegelsonde ADC lesen
 void update();            // Steuerlogik ausführen
 void handleButton();      // Taster pollen
 void handleMotion();      // Bewegungsmelder pollen
+void pollValveEnds(); // Ventilendschalter vs. Sollstellung (WebUI valveStatusOK)
+
+/** Live-Interpretation PIN_VALVE_STATUS (ohne Debounce/Sollgleichheit). */
+bool valveEndswitchIndicatesPool();
 
 // Aktoren
 void setPump(bool on);
