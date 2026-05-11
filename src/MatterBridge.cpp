@@ -38,6 +38,7 @@
 
 #include <freertos/FreeRTOS.h>
 #include <freertos/timers.h>
+#include <freertos/task.h>
 
 #include <cstring>
 
@@ -60,10 +61,39 @@ static uint16_t s_discriminator       = 0;
 static bool     s_started             = false;
 static volatile bool s_wifi_up_event  = false;
 
-// WiFi-Reconnect-Timer (analog ESP32-PoolMaster Matter_dev). Startet nach
-// jedem WIFI_EVENT_STA_DISCONNECTED einen erneuten esp_wifi_connect()-Versuch.
+// WiFi-Reconnect-Timer analog PoolMaster Matter_dev — **Callback entkoppelt**:
+// Der Timer feuert nur noch ein Worker-Task-Notify. `esp_wifi_connect()` darf nicht
+// direkt aus dem Timer-Daemon laufen (Tmr Svc-Stack oft 2048 B); sonst Overflow
+// + Reboot („kein WebUI“). Siehe Feld-Log: stack overflow in task Tmr Svc.
 static TimerHandle_t s_wifi_reconnect_timer  = nullptr;
+static TaskHandle_t  s_wifi_reconnect_worker = nullptr;
 static bool          s_wifi_handlers_done    = false;
+
+static constexpr uint32_t kWifiReconnectWorkerStackWords = 3072;
+static constexpr UBaseType_t kWifiReconnectWorkerPrio      = (tskIDLE_PRIORITY + 5);
+
+static void wifiReconnectWorkerMain(void* /*arg*/)
+{
+    for (;;) {
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+
+        ESP_LOGW(TAG, "WiFi: Reconnect-Versuch (Worker-Task)…");
+        esp_err_t err = esp_wifi_connect();
+        if (err != ESP_OK && err != ESP_ERR_WIFI_CONN) {
+            ESP_LOGW(TAG, "esp_wifi_connect (reconnect) -> %s", esp_err_to_name(err));
+            if (s_wifi_reconnect_timer) {
+                xTimerStop(s_wifi_reconnect_timer, pdMS_TO_TICKS(50));
+                xTimerStart(s_wifi_reconnect_timer, pdMS_TO_TICKS(50));
+            }
+        }
+    }
+}
+
+static void wifiReconnectTimerCb(TimerHandle_t /*xTimer*/)
+{
+    if (s_wifi_reconnect_worker)
+        xTaskNotifyGive(s_wifi_reconnect_worker);
+}
 
 // =============================================================================
 //  Matter-Callbacks (vorher in main.cpp)
@@ -195,20 +225,6 @@ static void restorePoolMasterSubscription()
 //  PoolMaster-Pattern.
 // =============================================================================
 
-static esp_err_t connectWifiInternal(); // fwd-decl
-
-static void wifiReconnectTimerCb(TimerHandle_t /*xTimer*/)
-{
-    ESP_LOGW(TAG, "WiFi: Reconnect-Versuch (Timer)…");
-    esp_err_t err = esp_wifi_connect();
-    if (err != ESP_OK && err != ESP_ERR_WIFI_CONN) {
-        ESP_LOGW(TAG, "esp_wifi_connect (reconnect) -> %s", esp_err_to_name(err));
-        // Re-arm Timer wenn Connect-Aufruf selbst scheitert (z.B. Treiber noch
-        // nicht bereit). Bei Erfolg löst die nächste DISCONNECT-Event ihn neu aus.
-        xTimerStart(s_wifi_reconnect_timer, 0);
-    }
-}
-
 static void wifiEventHandler(void* /*arg*/, esp_event_base_t base,
                              int32_t event_id, void* /*data*/)
 {
@@ -251,6 +267,18 @@ static void ipEventHandler(void* /*arg*/, esp_event_base_t base,
 static void registerWifiHandlersOnce()
 {
     if (s_wifi_handlers_done) return;
+    if (!s_wifi_reconnect_worker) {
+        const BaseType_t ok = xTaskCreate(
+            wifiReconnectWorkerMain,
+            "wifi_rc_wk",
+            kWifiReconnectWorkerStackWords,
+            nullptr,
+            kWifiReconnectWorkerPrio,
+            &s_wifi_reconnect_worker);
+        if (ok != pdPASS || !s_wifi_reconnect_worker)
+            ESP_LOGE(TAG,
+                     "WiFi-Reconnect: Worker-Task konnte nicht gestartet werden");
+    }
     if (!s_wifi_reconnect_timer) {
         s_wifi_reconnect_timer = xTimerCreate(
             "wifi_rc", pdMS_TO_TICKS(2000), pdFALSE, nullptr, wifiReconnectTimerCb);

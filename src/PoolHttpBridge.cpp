@@ -1,9 +1,9 @@
 #include "PoolHttpBridge.h"
 #include "Config.h"
+#include "Display.h"
 #include "SolarLogic.h"
 
 #include <Arduino.h>
-#include <WiFi.h>
 #include <ArduinoJson.h>
 #include <nvs.h>
 #include <esp_log.h>
@@ -157,7 +157,10 @@ void PoolHttpBridge::poll()
 {
     if (!PoolHttpBridge::isConfigured())
         return;
-    if (WiFi.status() != WL_CONNECTED)
+    // WICHTIG: STA läuft über esp_wifi_* (MatterBridge) — Arduino WiFi.status()
+    // bleibt oft WL_DISCONNECTED, obwohl IP da ist (Display::* wird korrekt gesetzt).
+    if (!Display::wifiConnected || Display::wifiIP[0] == '\0'
+        || Display::wifiIP[0] == '-')
         return;
 
     const uint32_t now = millis();
@@ -173,7 +176,7 @@ void PoolHttpBridge::poll()
     }
     snprintf(url, sizeof(url), "%s%s", s_base, kReadPath);
 
-    char        body[512];
+    char        body[896];
     HttpBodyBuf rb = {body, sizeof(body), 0};
     body[0]        = '\0';
 
@@ -209,21 +212,35 @@ void PoolHttpBridge::poll()
         return;
     }
 
-    StaticJsonDocument<384> doc;
+    StaticJsonDocument<448> doc;
     if (deserializeJson(doc, body, rb.len) != DeserializationError::Ok) {
         ESP_LOGW(TAG, "JSON parse error");
         s_lastOk = false;
         return;
     }
 
-    if (!doc.containsKey("poolTemp_C") || !doc.containsKey("poolSollTemp_C")) {
-        ESP_LOGW(TAG, "JSON ohne poolTemp_C/poolSollTemp_C");
+    float tmp = NAN;
+    if (doc.containsKey("poolTemp_C"))
+        tmp = doc["poolTemp_C"].as<float>();
+    else if (doc.containsKey("poolTemp"))
+        tmp = doc["poolTemp"].as<float>();
+
+    float soll = NAN;
+    if (doc.containsKey("poolSollTemp_C"))
+        soll = doc["poolSollTemp_C"].as<float>();
+    else if (doc.containsKey("poolSollTemp"))
+        soll = doc["poolSollTemp"].as<float>();
+    else if (doc.containsKey("poolSetTemp_C"))
+        soll = doc["poolSetTemp_C"].as<float>();
+
+    if (!(tmp == tmp) || !(soll == soll)) {
+        ESP_LOGW(TAG,
+                 "JSON ohne gültige Pool-Temperaturen "
+                 "(erwarte poolTemp_C/poolTemp, poolSollTemp_C/…)");
         s_lastOk = false;
         return;
     }
 
-    const float tmp = doc["poolTemp_C"].as<float>();
-    const float soll = doc["poolSollTemp_C"].as<float>();
     bool req = false;
     if (doc.containsKey("solarModeRequest"))
         req = doc["solarModeRequest"].as<bool>();
@@ -235,8 +252,9 @@ void PoolHttpBridge::poll()
     SolarLogic::onPoolTempReceived(tmp);
     SolarLogic::onPoolSolltempReceived(soll);
     SolarLogic::onPoolModeRequestReceived(req);
+    SolarLogic::update();
 
-    ESP_LOGD(TAG, "Pool HTTP: Tmp=%.2f Soll=%.2f SolarReq=%s", tmp, soll,
+    ESP_LOGD(TAG, "Pool HTTP: Ist=%.2f Soll=%.2f SolarReq=%s", tmp, soll,
              req ? "JA" : "NEIN");
     s_lastOk = true;
 }

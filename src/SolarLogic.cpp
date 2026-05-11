@@ -94,6 +94,11 @@ void init()
 #else
     digitalWrite(PIN_MOTION_POWER, LOW);
 #endif
+    // Analog zum Mega-Sketch: Nach PIR-Strom-An ist der Sensor erst stabil;
+    // erste Zeitspanne Display an (wie direkt nach erkannter Bewegung),
+    // sonst wäre Deadline=0 sofort „abgelaufen“ und das Panel ginge dunkel,
+    // bevor Bewegungen zuverlässig gelesen werden.
+    motionDisplayDeadlineMs = millis() + MOTION_DISPLAY_ON_MS;
     // Pegelsonde: ADC1, kein pinMode nötig (analogRead direkt)
 
     // ── SPI-Bus initialisieren ──────────────────────────────────────────────
@@ -427,9 +432,13 @@ void setMotionPower(bool on)
     digitalWrite(PIN_MOTION_POWER, on ? LOW : HIGH);
 #endif
     if (!on) {
+        // main.ino: PIR_POWER LOW → Display immer an (kein Bewegungs-Timeout)
         state.motionDetected      = false;
         motionDisplayDeadlineMs   = 0;
         Display::setOledSleep(false);
+    } else {
+        // Nach Ein: Anlauf HC-SR501 + erste Anzeige analog „Timer läuft“
+        motionDisplayDeadlineMs = millis() + MOTION_DISPLAY_ON_MS;
     }
     ESP_LOGI(TAG, "Bewegungsmelder Power: %s", on ? "EIN" : "AUS");
 }
@@ -533,16 +542,27 @@ void handleButton()
 
 
 // ────────────────────────────────────────────────────────────────────────────
-// Bewegungsmelder — Pegel + ActionPIR
-// Referenz: https://github.com/Robothaler/SolarControl/blob/main/src/main.ino
-//   ActionPIR(): PIR_POWER HIGH → PIR HIGH → LIGHT_PIN LOW + u8g2.setPowerSave(0) + Timer;
-//                 millis() >= Timer → LIGHT HIGH + setPowerSave(1)
-//                 PIR_POWER LOW → nur setPowerSave(0) (Display immer an)
-//   pinMode(PIR_PIN, INPUT); digitalRead(PIR_PIN)==HIGH = Bewegung
-// MOTION_ACTIVE_HIGH: 0 wenn Datenpin invertiert (LOW = Bewegung).
+// Bewegungsmelder — entspricht ActionPIR() im Mega main.ino
+// https://github.com/Robothaler/SolarControl/blob/main/src/main.ino
+//
+// Nur wenn PIR_POWER_PIN HIGH: Datenpin auswerten, Licht/OLED wie dort.
+// PIR_POWER_PIN LOW: kein Daten-Pin-Vertrauen, OLED bleibt wach — identisch zur
+// else-Zweigung im Original („Display immer an“).
+//
+// Datenpin beim Mega: INPUT ohne Pull-Up. MOTION_GPIO_PULLUP nach Bedarf auf 1.
+// MOTION_ACTIVE_HIGH: 0 wenn LOW = Bewegung.
 // ────────────────────────────────────────────────────────────────────────────
 void handleMotion()
 {
+    const uint32_t now = millis();
+
+    if (!state.motionPowerOn) {
+        state.motionDetected = false;
+        motionDisplayDeadlineMs = 0;
+        Display::setOledSleep(false);
+        return;
+    }
+
     const bool pinHigh      = (digitalRead(PIN_MOTION) == HIGH);
     const bool motionActive = MOTION_ACTIVE_HIGH ? pinHigh : !pinHigh;
 
@@ -553,14 +573,8 @@ void handleMotion()
     }
     state.motionDetected = motionActive;
 
-    if (!state.motionPowerOn) {
-        motionDisplayDeadlineMs = 0;
-        Display::setOledSleep(false);
-        return;
-    }
-
-    const uint32_t now = millis();
-
+    // Wie Original: Beweg HIGH → Licht an / OLED aktiv, Deadline neu gesetzt (auch
+    // solange Beweg gedrückt = Verlängerung).
     if (motionActive) {
 #if MOTION_CONTROLS_ILLUMINATION
         setIllumination(true);
@@ -569,7 +583,11 @@ void handleMotion()
         motionDisplayDeadlineMs = now + MOTION_DISPLAY_ON_MS;
     }
 
-    if (static_cast<int32_t>(now - motionDisplayDeadlineMs) >= 0) {
+    // Solange Deadline nie gesetzt (0): kein automatisches Dunkel-Schalten
+    // (warm-up / erste Phase nach Ein wurde in init()/setMotionPower gesetzt).
+    if (motionDisplayDeadlineMs != 0
+        && static_cast<int32_t>(now - motionDisplayDeadlineMs) >= 0)
+    {
 #if MOTION_CONTROLS_ILLUMINATION
         setIllumination(false);
 #endif

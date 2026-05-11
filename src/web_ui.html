@@ -22,6 +22,11 @@ h2{font-size:.68rem;text-transform:uppercase;letter-spacing:.1em;color:var(--dim
 .titem{background:#111114;border-radius:8px;padding:10px 12px}
 .tlbl{font-size:.7rem;color:var(--dim)}
 .tval{font-size:1.45rem;font-weight:600;color:var(--accent);margin-top:3px;white-space:nowrap}
+.motion-tile .tval{letter-spacing:.02em}
+.motion-tile.motion-yes .tval{color:var(--green)}
+.motion-tile.motion-no .tval{color:var(--dim);font-weight:500}
+.motion-tile.motion-off .tval{color:var(--dim);font-size:1.05rem;font-weight:600}
+.motion-hint{font-size:.72rem;color:var(--dim);margin-top:8px;line-height:1.35}
 .rows{display:flex;flex-direction:column;gap:8px}
 .row{display:flex;align-items:center;justify-content:space-between;padding:9px 12px;background:#111114;border-radius:8px;font-size:.9rem}
 .tog{position:relative;width:44px;height:24px;flex-shrink:0}
@@ -119,12 +124,25 @@ input:checked+.sl:before{transform:translateX(20px)}
     </div>
   </div>
 
+  <!-- Bewegungsmelder (gross lesbar) -->
+  <div class="card">
+    <h2>Bewegungsmelder</h2>
+    <div class="tgrid">
+      <div class="titem motion-tile motion-no" id="motionTile">
+        <div class="tlbl">Status</div>
+        <div class="tval" id="motionBig">&#8211;</div>
+        <div class="motion-hint" id="motionHint"></div>
+      </div>
+    </div>
+  </div>
+
   <!-- Pool + Modus -->
   <div class="card">
     <h2>Pool-Temperaturen</h2>
     <div class="tgrid">
       <div class="titem"><div class="tlbl">Pool Ist</div><div class="tval" id="t4">--&deg;C</div></div>
       <div class="titem"><div class="tlbl">Pool Soll</div><div class="tval" id="t5">--&deg;C</div></div>
+      <div class="titem"><div class="tlbl">Pool &rarr; Solar (Heiz-Anforderung)</div><div class="tval" id="psr">&#8211;</div></div>
     </div>
     <div class="sep">
       <h2>Betriebsmodus</h2>
@@ -144,15 +162,17 @@ input:checked+.sl:before{transform:translateX(20px)}
       <div class="row"><span>Ventil (Pool-Modus)</span><label class="tog"><input type="checkbox" id="a1" onchange="cmd('set_valve',this.checked)"><span class="sl"></span></label></div>
       <div class="row"><span>Zirkulationspumpe</span><label class="tog"><input type="checkbox" id="a2" onchange="cmd('set_circ',this.checked)"><span class="sl"></span></label></div>
       <div class="row"><span>Beleuchtung</span><label class="tog"><input type="checkbox" id="a3" onchange="cmd('set_illum',this.checked)"><span class="sl"></span></label></div>
-      <div class="row"><span>Bewegungsm. Power (GPIO21)</span><label class="tog"><input type="checkbox" id="a4" onchange="cmd('set_motion_power',this.checked)"><span class="sl"></span></label></div>
+      <div class="row"><span>Bewegungsmelder Versorgung</span><label class="tog"><input type="checkbox" id="a4" onchange="cmd('set_motion_power',this.checked)"><span class="sl"></span></label></div>
     </div>
   </div>
 
   <!-- Eingaenge -->
   <div class="card">
     <h2>Eing&auml;nge</h2>
-    <div class="irow"><span>Ventilstatus</span><span id="vs" class="bdg">-</span></div>
-    <div class="irow"><span>Bewegungsmelder</span><span id="mv" class="bdg">-</span></div>
+    <div class="irow"><span>Ventil (Soll Relais)</span><span id="vcmd" class="ival">&ndash;</span></div>
+    <div class="irow"><span>Ventil (Ist Endschalter)</span><span id="vfb" class="ival">&ndash;</span></div>
+    <div class="irow"><span>Ventil-Abgleich Soll/Ist</span><span id="vs" class="bdg">-</span></div>
+    <div class="irow"><span>Bewegungsmelder (Detail)</span><span id="mv" class="bdg">-</span></div>
     <div class="irow"><span>F&uuml;llstand</span><span id="lv" class="ival">-</span></div>
     <div class="lvlbg"><div class="lvlfill" id="lb"></div></div>
   </div>
@@ -384,6 +404,9 @@ function applyStatus(d) {
   setText('t3', tf(d.backflowTemp));
   setText('t4', tf(d.poolTemp));
   setText('t5', tf(d.poolSollTemp));
+  var psr = document.getElementById('psr');
+  if (psr) psr.textContent = (typeof d.poolModeRequest === 'boolean')
+    ? (d.poolModeRequest ? 'Ja (Solar)' : 'Nein') : '\u2013';
 
   ['m0','m1','m2'].forEach(function(id) { document.getElementById(id).classList.remove('act'); });
   var mi = { 'AUTO':'m0', 'MANUAL_POOL':'m1', 'MANUAL_BOILER':'m2' };
@@ -395,13 +418,41 @@ function applyStatus(d) {
   chk('a3', d.illuminationOn);
   chk('a4', d.motionPower);
 
+  var vcmd = document.getElementById('vcmd');
+  if (vcmd && d.valveCommand) vcmd.textContent = d.valveCommand;
+  var vfb = document.getElementById('vfb');
+  if (vfb && d.valveEndswitch) vfb.textContent = d.valveEndswitch;
+
   var vs = document.getElementById('vs');
-  vs.textContent = d.valveStatusOK ? 'OK' : 'FEHLER';
+  vs.textContent = d.valveStatusOK ? 'gleich / OK' : 'Abweichung';
   vs.className   = 'bdg ' + (d.valveStatusOK ? 'ok' : 'err');
 
   var mv = document.getElementById('mv');
-  mv.textContent = d.motionDetected ? 'Erkannt' : 'Keine';
-  mv.className   = 'bdg ' + (d.motionDetected ? 'ok' : '');
+  if (mv) {
+    mv.textContent =
+      (!d.motionPower ? 'Aus (Bypass: kein Daten-Pin)'
+        : (d.motionDetected ? 'Erkannt' : 'Keine'));
+    mv.className   = 'bdg ' + (d.motionDetected ? 'ok' : '');
+  }
+
+  var motionBig = document.getElementById('motionBig');
+  var motionTile = document.getElementById('motionTile');
+  var motionHint = document.getElementById('motionHint');
+  if (motionBig && motionTile) {
+    if (!d.motionPower) {
+      motionBig.textContent = 'Sensor aus';
+      motionTile.className = 'titem motion-tile motion-off';
+      if (motionHint) motionHint.textContent = 'Versorgung aus — Datenpin wird nicht ausgewertet.';
+    } else if (d.motionDetected) {
+      motionBig.textContent = 'Bewegung';
+      motionTile.className = 'titem motion-tile motion-yes';
+      if (motionHint) motionHint.textContent = 'Melder signalisiert gerade Aktivität.';
+    } else {
+      motionBig.textContent = 'Ruhe';
+      motionTile.className = 'titem motion-tile motion-no';
+      if (motionHint) motionHint.textContent = 'Keine Bewegung am Datenpin.';
+    }
+  }
 
   var lp = d.levelPct || 0;
   setText('lv', lp.toFixed(1) + '%' + (d.levelWarn ? ' \u26A0' : ''));

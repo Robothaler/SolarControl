@@ -117,11 +117,14 @@ constexpr uint8_t DS18B20_IDX_BACKFLOW = 1;  // Rücklauf Solar
   #define PIN_BUTTON               6   // Taster Modus (INPUT_PULLUP)
 #endif
 #ifndef PIN_MOTION
-  #define PIN_MOTION               7   // Bewegungsmelder HC-SR501 (INPUT)
+  #define PIN_MOTION               21   // Bewegungsmelder HC-SR501 (INPUT)
 #endif
 #ifndef PIN_MOTION_POWER
-  #define PIN_MOTION_POWER        21   // HC-SR501 Stromversorgung (via N-MOSFET/NPN)
+  #define PIN_MOTION_POWER        7   // HC-SR501 Stromversorgung (via N-MOSFET/NPN)
 #endif
+// ACHTUNG (Pinbelegung gegenüber Mega SolarControl): dort war PIR_DATEN oft an GPIO 18.
+// Auf ESP32 ist default PIN_RELAY_ILLUM ebenfalls 18 — PIR-Datenleitung MUSS ein anderer
+// freier GPIO sein (hier default PIN_MOTION=7), nicht mit dem Relais kombinieren.
 
 // Bewegungsmelder (ActionPIR aus Arduino main.ino):
 // Original: Bewegung bei digitalRead(PIR_PIN)==HIGH → Display an, Timer neu.

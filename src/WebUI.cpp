@@ -225,11 +225,13 @@ static void build_json(char* buf, size_t len, bool include_full) {
         "\"poolSollTemp\":%.2f,"
         "\"pumpRunning\":%s,"
         "\"valvePool\":%s,"
+        "\"valveCommand\":\"%s\","
+        "\"valveEndswitch\":\"%s\","
+        "\"valveStatusOK\":%s,"
         "\"circulationOn\":%s,"
         "\"illuminationOn\":%s,"
         "\"motionPower\":%s,"
         "\"motionDetected\":%s,"
-        "\"valveStatusOK\":%s,"
         "\"levelPct\":%.1f,"
         "\"levelWarn\":%s,"
         "\"mode\":\"%s\","
@@ -243,16 +245,19 @@ static void build_json(char* buf, size_t len, bool include_full) {
         "\"version\":\"%s\","
         "\"tempDiffOn\":%.1f,"
         "\"tempDiffOff\":%.1f,"
-        "\"levelWarnPct\":%.0f",
+        "\"levelWarnPct\":%.0f,"
+        "\"poolModeRequest\":%s",
         s.roofTemp, s.boilerTemp, s.storageTemp, s.backflowTemp,
         s.poolTemp, s.poolSollTemp,
         s.pumpRunning     ? "true" : "false",
         s.valvePool       ? "true" : "false",
+        s.valvePool       ? "POOL" : "BOILER",
+        SolarLogic::valveEndswitchIndicatesPool() ? "POOL" : "BOILER",
+        s.valveStatusOK   ? "true" : "false",
         s.circulationOn   ? "true" : "false",
         s.illuminationOn  ? "true" : "false",
         s.motionPowerOn   ? "true" : "false",
         s.motionDetected  ? "true" : "false",
-        s.valveStatusOK   ? "true" : "false",
         s.levelPct,
         s.levelWarn       ? "true" : "false",
         mode,
@@ -266,7 +271,8 @@ static void build_json(char* buf, size_t len, bool include_full) {
         APP_VERSION,
         SolarLogic::tunables.tempDiffOn,
         SolarLogic::tunables.tempDiffOff,
-        SolarLogic::tunables.levelWarnPct);
+        SolarLogic::tunables.levelWarnPct,
+        s.poolModeRequest ? "true" : "false");
 
     // Echtzeit-Uhr (lokale Zeit) für UI-Anzeige
     if (n > 0 && (size_t)n < len) {

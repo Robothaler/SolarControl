@@ -63,6 +63,8 @@ CONFIG_ARDUINO_SELECTIVE_HTTPClient=n
 # ── FreeRTOS ───────────────────────────────────────────────────────────────────
 CONFIG_FREERTOS_HZ=1000
 CONFIG_FREERTOS_UNICORE=n
+# Zusätzliche Reserve für andere Software-Timer-Callbacks neben Matter (Default 2048).
+CONFIG_FREERTOS_TIMER_TASK_STACK_DEPTH=3584
 
 # ── Bluetooth (BLE) für Matter-Commissioning aktiviert ───────────────────────
 # Matter-Commissioning via CHIPoBLE: BLE wird nur während des Pairings benötigt
